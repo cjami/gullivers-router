@@ -3,7 +3,7 @@ import numpy as np
 from gullivers_router.router.model import RouterModel
 from gullivers_router.training import store
 from gullivers_router.training.pipeline import Artifacts
-from gullivers_router.training.router import _needs_cloud, train_router
+from gullivers_router.training.router import _load_dataset, _needs_cloud, train_router
 
 
 def test_needs_cloud_only_when_local_fails_and_cloud_passes():
@@ -67,3 +67,16 @@ def test_exported_weights_are_loadable(tmp_path):
     weights = RouterModel.load(artifacts.router_model)
 
     assert weights.predict_proba(np.ones((1, 4))).shape == (1,)
+
+
+def test_load_dataset_uses_latest_label_for_duplicate_id(tmp_path):
+    artifacts = Artifacts(tmp_path)
+    store.append(artifacts.embeddings, {"id": "a", "embedding": [0.0, 1.0]})
+    store.append(artifacts.labels, {"id": "a", "category": "code", "local_score": 1, "cloud_score": 1})
+    store.append(artifacts.labels, {"id": "a", "category": "code", "local_score": 3, "cloud_score": 5})
+
+    data = _load_dataset(artifacts, quality_floor=4.0)
+
+    assert len(data) == 1
+    assert data.local_scores.tolist() == [3.0]
+    assert data.cloud_scores.tolist() == [5.0]

@@ -8,9 +8,10 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from gullivers_router.config import ModelConfig
-    from gullivers_router.inference.base import Message
+    from gullivers_router.inference.base import Message, StructuredOutput
 
 from gullivers_router.inference.base import DEFAULT_INFERENCE_SEED
+from gullivers_router.inference.structured import openai_json_schema_response_format
 
 
 class OpenAICompatChat:
@@ -39,3 +40,18 @@ class OpenAICompatChat:
             seed=DEFAULT_INFERENCE_SEED,
         )
         return response.choices[0].message.content or ""
+
+    def complete_structured(
+        self,
+        messages: Sequence[Message],
+        response_model: type[StructuredOutput],
+    ) -> StructuredOutput:
+        """Generate a response constrained to a Pydantic model schema."""
+        response = self._get_client().chat.completions.create(
+            model=self._config.model,
+            messages=[m.as_dict() for m in messages],
+            seed=DEFAULT_INFERENCE_SEED,
+            response_format=openai_json_schema_response_format(response_model),
+        )
+        content = response.choices[0].message.content or ""
+        return response_model.model_validate_json(content)

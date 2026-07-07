@@ -44,10 +44,45 @@ def test_build_labels_writes_rows_and_skips_unscored(tmp_path):
 
 def test_build_labels_is_resumable(tmp_path):
     prompts = [Prompt(id="a", category=Category.CODE_GENERATION, text="x")]
-    judgements = [Judgement(id="a", local_score=3, cloud_score=8)]
+    judgements = [
+        Judgement(
+            id="a",
+            local_score=3,
+            cloud_score=8,
+            local_rationale="missed detail",
+            cloud_rationale="complete",
+            local_quality="adequate",
+            cloud_quality="excellent",
+            preferred_source="cloud",
+        )
+    ]
     out = tmp_path / "labels.jsonl"
 
     build_labels(prompts, judgements, out)
     build_labels(prompts, judgements, out)
 
     assert len(list(store.read_records(out))) == 1
+
+
+def test_build_labels_retries_existing_incomplete_label(tmp_path):
+    prompts = [Prompt(id="a", category=Category.CODE_GENERATION, text="x")]
+    judgements = [
+        Judgement(
+            id="a",
+            local_score=3,
+            cloud_score=5,
+            local_rationale="thin",
+            cloud_rationale="complete",
+            local_quality="adequate",
+            cloud_quality="excellent",
+            preferred_source="cloud",
+        )
+    ]
+    out = tmp_path / "labels.jsonl"
+    store.append(out, {"id": "a", "category": "code_generation", "local_score": 3, "cloud_score": 5})
+
+    build_labels(prompts, judgements, out)
+
+    rows = list(store.read_records(out))
+    assert len(rows) == 2
+    assert rows[-1]["preferred_source"] == "cloud"

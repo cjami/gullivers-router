@@ -5,13 +5,14 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from gullivers_router.inference.base import DEFAULT_INFERENCE_SEED
+from gullivers_router.inference.structured import llama_cpp_json_schema_response_format
 from gullivers_router.inference.truncation import EMBEDDING_CONTEXT_LIMIT, truncate_head_tail
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from gullivers_router.config import ModelConfig
-    from gullivers_router.inference.base import Message
+    from gullivers_router.inference.base import Message, StructuredOutput
 
 DEFAULT_CHAT_CONTEXT = 4096
 OFFLOAD_ALL_LAYERS = -1
@@ -69,6 +70,20 @@ class LlamaCppChat:
             seed=DEFAULT_INFERENCE_SEED,
         )
         return result["choices"][0]["message"].get("content") or ""
+
+    def complete_structured(
+        self,
+        messages: Sequence[Message],
+        response_model: type[StructuredOutput],
+    ) -> StructuredOutput:
+        """Generate a response constrained to a Pydantic model schema."""
+        result = self._load().create_chat_completion(
+            messages=[m.as_dict() for m in messages],
+            seed=DEFAULT_INFERENCE_SEED,
+            response_format=llama_cpp_json_schema_response_format(response_model),
+        )
+        content = result["choices"][0]["message"].get("content") or ""
+        return response_model.model_validate_json(content)
 
 
 class LlamaCppEmbedder:

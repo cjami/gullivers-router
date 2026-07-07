@@ -43,7 +43,8 @@ class _Dataset:
 def _load_dataset(artifacts: Artifacts, quality_floor: float) -> _Dataset:
     """Join judge scores to embeddings by id, keeping only prompts present in both."""
     embeddings = store.read_map(artifacts.embeddings, value="embedding")
-    rows = [row for row in store.read_records(artifacts.labels) if row["id"] in embeddings]
+    labels_by_id = {row["id"]: row for row in store.read_records(artifacts.labels)}
+    rows = [row for item_id, row in labels_by_id.items() if item_id in embeddings]
     if not rows:
         msg = "no rows with both judge scores and an embedding; run the label and embed stages first"
         raise ValueError(msg)

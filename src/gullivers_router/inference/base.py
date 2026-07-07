@@ -4,12 +4,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, TypeVar, runtime_checkable
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from pydantic import BaseModel
+
 DEFAULT_INFERENCE_SEED = 1
+StructuredOutput = TypeVar("StructuredOutput", bound="BaseModel")
 
 
 class Provider(StrEnum):
@@ -46,6 +49,19 @@ class ChatModel(Protocol):
 
     def complete(self, messages: Sequence[Message]) -> str:
         """Return the model's answer to a single prompt."""
+        ...
+
+
+@runtime_checkable
+class StructuredChatModel(ChatModel, Protocol):
+    """A chat model that can constrain output to a Pydantic response model."""
+
+    def complete_structured(
+        self,
+        messages: Sequence[Message],
+        response_model: type[StructuredOutput],
+    ) -> StructuredOutput:
+        """Return the model's answer parsed as ``response_model``."""
         ...
 
 

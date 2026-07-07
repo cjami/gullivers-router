@@ -12,7 +12,7 @@ import random
 import time
 from concurrent import futures
 from threading import Lock
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeVar
 
 from gullivers_router.inference.base import user_message
 from gullivers_router.training import store
@@ -28,6 +28,7 @@ DEFAULT_CONCURRENCY = 8
 MAX_ATTEMPTS = 6
 _BACKOFF_BASE_SECONDS = 1.0
 _BACKOFF_CAP_SECONDS = 30.0
+RetryResult = TypeVar("RetryResult")
 
 
 def run_local(prompts: Sequence[Prompt], model: ChatModel, out: Path) -> None:
@@ -98,9 +99,14 @@ def run_concurrent(  # noqa: PLR0913 - each argument is a distinct orchestration
 
 def complete_with_retry(model: ChatModel, messages: Sequence[Message]) -> str:
     """Call the model, retrying transient failures (e.g. 429s) with jittered backoff."""
+    return call_with_retry(lambda: model.complete(messages))
+
+
+def call_with_retry(operation: Callable[[], RetryResult]) -> RetryResult:
+    """Run an operation with jittered backoff between transient failures."""
     for attempt in range(MAX_ATTEMPTS):
         try:
-            return model.complete(messages)
+            return operation()
         except Exception:
             if attempt + 1 == MAX_ATTEMPTS:
                 raise

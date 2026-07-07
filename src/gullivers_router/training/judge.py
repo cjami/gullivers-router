@@ -2,20 +2,22 @@
 
 The judge sees the prompt and two anonymized responses in a deterministic, balanced order. It
 returns word-only quality labels and a simple A/B/tie preference; numeric training values are
-derived in code. Parsing is defensive: malformed output yields null scores so the row is still
-recorded and skipped by downstream training-row construction.
+derived in code. Malformed output is retried and left unwritten if the judge keeps returning an
+invalid judgement, so a later resume can try again.
 """
 
 from __future__ import annotations
 
 import hashlib
-import json
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Annotated, Literal
+
+from pydantic import BaseModel, ConfigDict, StringConstraints, field_validator
 
 from gullivers_router.inference.base import Message, Role
+from gullivers_router.inference.structured import complete_structured
 from gullivers_router.training import store
-from gullivers_router.training.generate import DEFAULT_CONCURRENCY, complete_with_retry
+from gullivers_router.training.generate import DEFAULT_CONCURRENCY, call_with_retry
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -31,8 +33,10 @@ QUALITY_VALUES = {
     "good": 4.0,
     "excellent": 5.0,
 }
-PREFERRED_RESPONSES = {"response_a", "response_b", "tie"}
 TIE_BREAK_BONUS = 0.25
+QualityLabel = Literal["unacceptable", "poor", "adequate", "good", "excellent"]
+PreferredResponse = Literal["response_a", "response_b", "tie"]
+ShortText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
 _SYSTEM_PROMPT = (
     "You are an impartial evaluator. The two assistant responses are anonymized and may appear "
@@ -52,6 +56,28 @@ _USER_TEMPLATE = (
 
 _LOCAL = "local"
 _CLOUD = "cloud"
+PREFERRED_SOURCES = {_LOCAL, _CLOUD, "tie"}
+
+
+def _normalised_token(value: object) -> object:
+    return value.strip().lower() if isinstance(value, str) else value
+
+
+class JudgeResult(BaseModel):
+    """Structured judge result for anonymized response A/B."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    response_a_quality: QualityLabel
+    response_a_rationale: ShortText
+    response_b_quality: QualityLabel
+    response_b_rationale: ShortText
+    preferred_response: PreferredResponse
+
+    @field_validator("response_a_quality", "response_b_quality", "preferred_response", mode="before")
+    @classmethod
+    def _normalise_labels(cls, value: object) -> object:
+        return _normalised_token(value)
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,17 +92,6 @@ class Judgement:
     local_quality: str | None = None
     cloud_quality: str | None = None
     preferred_source: str | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class ParsedScores:
-    """Word-only qualities, preference, and rationales for anonymized response A/B."""
-
-    response_a_quality: str | None
-    response_b_quality: str | None
-    preferred_response: str | None
-    response_a_rationale: str | None = None
-    response_b_rationale: str | None = None
 
 
 def _judge_messages(pair: ResponsePair, order: tuple[str, str]) -> list[Message]:
@@ -107,74 +122,37 @@ def _quality_label(value: object) -> str | None:
     return label if label in QUALITY_VALUES else None
 
 
-def _preferred_response(value: object) -> str | None:
-    text = _short_text(value)
-    if text is None:
-        return None
-    label = text.lower()
-    return label if label in PREFERRED_RESPONSES else None
-
-
-def _extract_json_object(content: str) -> dict | None:
-    decoder = json.JSONDecoder()
-    for index, character in enumerate(content):
-        if character != "{":
-            continue
-        try:
-            payload, _ = decoder.raw_decode(content[index:])
-        except json.JSONDecodeError:
-            continue
-        return payload if isinstance(payload, dict) else None
-    return None
-
-
-def parse_scores(content: str) -> ParsedScores:
-    """Extract anonymized A/B quality labels and preference from judge output."""
-    payload = _extract_json_object(content)
-    if payload is None:
-        return ParsedScores(None, None, None)
-    return ParsedScores(
-        response_a_quality=_quality_label(payload.get("response_a_quality")),
-        response_b_quality=_quality_label(payload.get("response_b_quality")),
-        preferred_response=_preferred_response(payload.get("preferred_response")),
-        response_a_rationale=_short_text(payload.get("response_a_rationale")),
-        response_b_rationale=_short_text(payload.get("response_b_rationale")),
-    )
-
-
 def _primary_order(item_id: str) -> tuple[str, str]:
     digest = hashlib.sha256(item_id.encode("utf-8")).digest()
     return (_LOCAL, _CLOUD) if digest[0] % 2 == 0 else (_CLOUD, _LOCAL)
 
 
-def _mapped_scores(parsed: ParsedScores, order: tuple[str, str]) -> dict[str, float | bool | str | None]:
+def _mapped_scores(result: JudgeResult, order: tuple[str, str]) -> dict[str, float | bool | str | None]:
     mapped: dict[str, float | bool | str | None] = {}
-    scored = _scored_labels(parsed)
+    scored = _scored_labels(result)
     for source, score, quality, rationale in (
-        (order[0], scored[0], parsed.response_a_quality, parsed.response_a_rationale),
-        (order[1], scored[1], parsed.response_b_quality, parsed.response_b_rationale),
+        (order[0], scored[0], result.response_a_quality, result.response_a_rationale),
+        (order[1], scored[1], result.response_b_quality, result.response_b_rationale),
     ):
         mapped[f"{source}_score"] = score
         mapped[f"{source}_quality"] = quality
         mapped[f"{source}_rationale"] = rationale
-    mapped["preferred_source"] = _preferred_source(parsed.preferred_response, order)
-    mapped["preference_consistent"] = _preference_consistent(parsed)
+    mapped["preferred_source"] = _preferred_source(result.preferred_response, order)
+    mapped["preference_consistent"] = _preference_consistent(result)
     return mapped
 
 
-def _scored_labels(parsed: ParsedScores) -> tuple[float | None, float | None]:
-    if parsed.response_a_quality is None or parsed.response_b_quality is None:
-        return None, None
-    score_a = QUALITY_VALUES[parsed.response_a_quality]
-    score_b = QUALITY_VALUES[parsed.response_b_quality]
-    if score_a == score_b and parsed.preferred_response == "response_a":
+def _scored_labels(result: JudgeResult) -> tuple[float, float]:
+    score_a = QUALITY_VALUES[result.response_a_quality]
+    score_b = QUALITY_VALUES[result.response_b_quality]
+    if score_a == score_b and result.preferred_response == "response_a":
         score_a += TIE_BREAK_BONUS
-    elif score_a == score_b and parsed.preferred_response == "response_b":
+    elif score_a == score_b and result.preferred_response == "response_b":
         score_b += TIE_BREAK_BONUS
     return score_a, score_b
 
 
-def _preferred_source(preferred_response: str | None, order: tuple[str, str]) -> str | None:
+def _preferred_source(preferred_response: PreferredResponse, order: tuple[str, str]) -> str:
     if preferred_response == "response_a":
         return order[0]
     if preferred_response == "response_b":
@@ -182,21 +160,19 @@ def _preferred_source(preferred_response: str | None, order: tuple[str, str]) ->
     return preferred_response
 
 
-def _preference_consistent(parsed: ParsedScores) -> bool | None:
-    if parsed.response_a_quality is None or parsed.response_b_quality is None or parsed.preferred_response is None:
-        return None
-    score_a = QUALITY_VALUES[parsed.response_a_quality]
-    score_b = QUALITY_VALUES[parsed.response_b_quality]
+def _preference_consistent(result: JudgeResult) -> bool:
+    score_a = QUALITY_VALUES[result.response_a_quality]
+    score_b = QUALITY_VALUES[result.response_b_quality]
     if score_a == score_b:
         return True
     if score_a > score_b:
-        return parsed.preferred_response == "response_a"
-    return parsed.preferred_response == "response_b"
+        return result.preferred_response == "response_a"
+    return result.preferred_response == "response_b"
 
 
-def _record(pair: ResponsePair, content: str) -> dict:
+def _record(pair: ResponsePair, result: JudgeResult) -> dict:
     primary_order = _primary_order(pair.prompt.id)
-    primary = _mapped_scores(parse_scores(content), primary_order)
+    primary = _mapped_scores(result, primary_order)
     return {
         "id": pair.prompt.id,
         "local_score": primary.get("local_score"),
@@ -212,8 +188,35 @@ def _record(pair: ResponsePair, content: str) -> dict:
 
 def _judge_pair(pair: ResponsePair, model: ChatModel) -> dict:
     primary_order = _primary_order(pair.prompt.id)
-    content = complete_with_retry(model, _judge_messages(pair, primary_order))
-    return _record(pair, content)
+    messages = _judge_messages(pair, primary_order)
+    result = call_with_retry(lambda: complete_structured(model, messages, JudgeResult))
+    return _record(pair, result)
+
+
+def _numeric(value: object) -> bool:
+    if isinstance(value, bool) or not isinstance(value, str | int | float):
+        return False
+    try:
+        float(value)
+    except (TypeError, ValueError):
+        return False
+    return True
+
+
+def _valid_record(record: dict) -> bool:
+    return (
+        _numeric(record.get("local_score"))
+        and _numeric(record.get("cloud_score"))
+        and _quality_label(record.get("local_quality")) is not None
+        and _quality_label(record.get("cloud_quality")) is not None
+        and _short_text(record.get("local_rationale")) is not None
+        and _short_text(record.get("cloud_rationale")) is not None
+        and _short_text(record.get("preferred_source")) in PREFERRED_SOURCES
+    )
+
+
+def _completed_valid_ids(path: Path) -> set[str]:
+    return {record["id"] for record in store.read_records(path) if _valid_record(record)}
 
 
 def _legacy_record(record: dict) -> Judgement:
@@ -244,7 +247,7 @@ def run_judge(
 
     from tqdm import tqdm
 
-    done = store.completed_ids(out)
+    done = _completed_valid_ids(out)
     pending = [pair for pair in pairs if pair.prompt.id not in done]
     if not pending:
         return

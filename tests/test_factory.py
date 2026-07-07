@@ -3,12 +3,17 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
+from pydantic import BaseModel
 
 from gullivers_router.config import ModelConfig
 from gullivers_router.inference import factory
 from gullivers_router.inference.base import DEFAULT_INFERENCE_SEED, Message, Provider, Role
 from gullivers_router.inference.llama_cpp import LlamaCppChat, LlamaCppEmbedder
 from gullivers_router.inference.openai_compat import OpenAICompatChat
+
+
+class StructuredReply(BaseModel):
+    answer: str
 
 
 def _cfg(provider, **kwargs):
@@ -49,6 +54,27 @@ def test_openai_compatible_chat_uses_global_seed():
     assert captured["seed"] == DEFAULT_INFERENCE_SEED
 
 
+def test_openai_compatible_chat_sends_json_schema_response_format():
+    captured = {}
+
+    def create(**kwargs):
+        captured.update(kwargs)
+        message = SimpleNamespace(content='{"answer": "ok"}')
+        return SimpleNamespace(choices=[SimpleNamespace(message=message)])
+
+    chat = OpenAICompatChat(_cfg(Provider.FIREWORKS, api_key="k", model="m"))
+    chat._client = cast(Any, SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create))))
+
+    result = chat.complete_structured([Message(Role.USER, "hello")], StructuredReply)
+
+    assert result == StructuredReply(answer="ok")
+    assert captured["seed"] == DEFAULT_INFERENCE_SEED
+    assert captured["response_format"]["type"] == "json_schema"
+    assert captured["response_format"]["json_schema"]["name"] == "StructuredReply"
+    assert captured["response_format"]["json_schema"]["strict"] is True
+    assert captured["response_format"]["json_schema"]["schema"]["properties"]["answer"]["type"] == "string"
+
+
 def test_llama_chat_loads_with_global_seed(monkeypatch):
     captured = {}
 
@@ -68,3 +94,28 @@ def test_llama_chat_loads_with_global_seed(monkeypatch):
     assert chat.complete([Message(Role.USER, "hello")]) == "ok"
     assert captured["seed"] == DEFAULT_INFERENCE_SEED
     assert captured["completion_seed"] == DEFAULT_INFERENCE_SEED
+
+
+def test_llama_chat_sends_schema_response_format(monkeypatch):
+    captured = {}
+
+    class FakeLlama:
+        @classmethod
+        def from_pretrained(cls, **kwargs) -> "FakeLlama":
+            captured.update(kwargs)
+            return cls()
+
+        def create_chat_completion(self, messages, seed, response_format):
+            captured["completion_seed"] = seed
+            captured["response_format"] = response_format
+            return {"choices": [{"message": {"content": '{"answer": "ok"}'}}]}
+
+    monkeypatch.setitem(sys.modules, "llama_cpp", SimpleNamespace(Llama=FakeLlama))
+    chat = LlamaCppChat(_cfg(Provider.LLAMA, repo_id="repo", filename="model.gguf"))
+
+    result = chat.complete_structured([Message(Role.USER, "hello")], StructuredReply)
+
+    assert result == StructuredReply(answer="ok")
+    assert captured["completion_seed"] == DEFAULT_INFERENCE_SEED
+    assert captured["response_format"]["type"] == "json_object"
+    assert captured["response_format"]["schema"]["properties"]["answer"]["type"] == "string"

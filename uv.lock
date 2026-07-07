@@ -460,6 +460,7 @@ dependencies = [
     { name = "llama-cpp-python" },
     { name = "numpy" },
     { name = "openai" },
+    { name = "pydantic" },
     { name = "python-dotenv" },
 ]
 
@@ -483,6 +484,7 @@ requires-dist = [
     { name = "llama-cpp-python", index = "https://abetlen.github.io/llama-cpp-python/whl/vulkan" },
     { name = "numpy" },
     { name = "openai" },
+    { name = "pydantic" },
     { name = "python-dotenv" },
 ]
 
