@@ -83,7 +83,7 @@ def run_concurrent(  # noqa: PLR0913 - each argument is a distinct orchestration
 
     lock = Lock()
     with futures.ThreadPoolExecutor(max_workers=max_workers) as pool, tqdm(total=len(pending), desc=label) as bar:
-        submitted = {pool.submit(_complete_with_retry, model, items[item_id]): item_id for item_id in pending}
+        submitted = {pool.submit(complete_with_retry, model, items[item_id]): item_id for item_id in pending}
         for future in futures.as_completed(submitted):
             item_id = submitted[future]
             try:
@@ -96,7 +96,7 @@ def run_concurrent(  # noqa: PLR0913 - each argument is a distinct orchestration
             bar.update(1)
 
 
-def _complete_with_retry(model: ChatModel, messages: Sequence[Message]) -> str:
+def complete_with_retry(model: ChatModel, messages: Sequence[Message]) -> str:
     """Call the model, retrying transient failures (e.g. 429s) with jittered backoff."""
     for attempt in range(MAX_ATTEMPTS):
         try:

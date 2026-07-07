@@ -7,12 +7,19 @@ from pathlib import Path
 from gullivers_router.training.combine import ResponsePair, align_pairs
 from gullivers_router.training.dataset import SAMPLES_PER_CATEGORY, Category, Prompt, load_prompts
 from gullivers_router.training.generate import DEFAULT_CONCURRENCY
-from gullivers_router.training.labels import DEFAULT_MARGIN
 from gullivers_router.training.pipeline import DEFAULT_OUT, STAGES, run_pipeline
-from gullivers_router.training.router import DEFAULT_SEED, DEFAULT_VAL_FRACTION, train_router
+from gullivers_router.training.router import (
+    DEFAULT_QUALITY_FLOOR,
+    DEFAULT_SEED,
+    DEFAULT_TARGET_PASS_RATE,
+    DEFAULT_VAL_FRACTION,
+    train_router,
+)
 
 __all__ = [
+    "DEFAULT_QUALITY_FLOOR",
     "DEFAULT_SEED",
+    "DEFAULT_TARGET_PASS_RATE",
     "DEFAULT_VAL_FRACTION",
     "Category",
     "Prompt",
@@ -27,9 +34,8 @@ __all__ = [
 def train(
     samples_per_category: int = SAMPLES_PER_CATEGORY,
     out: str = DEFAULT_OUT,
-    margin: int = DEFAULT_MARGIN,
     stages: tuple[str, ...] = STAGES,
     workers: int = DEFAULT_CONCURRENCY,
 ) -> None:
-    """Build the labelled training dataset (select -> generate -> judge -> label)."""
-    run_pipeline(samples_per_category, Path(out), margin=margin, stages=stages, workers=workers)
+    """Build the router training dataset (select -> generate -> judge -> targets)."""
+    run_pipeline(samples_per_category, Path(out), stages=stages, workers=workers)

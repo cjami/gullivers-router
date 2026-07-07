@@ -21,6 +21,32 @@ def test_train_dispatches_to_training(monkeypatch):
     calls = []
     monkeypatch.setattr("gullivers_router.training.train", lambda **kwargs: calls.append(kwargs))
     assert main(["train", "--samples", "5", "--out", "artifacts/x", "--stages", "local,cloud", "--workers", "4"]) == 0
-    assert calls == [
-        {"samples_per_category": 5, "out": "artifacts/x", "margin": 2, "stages": ("local", "cloud"), "workers": 4}
-    ]
+    assert calls == [{"samples_per_category": 5, "out": "artifacts/x", "stages": ("local", "cloud"), "workers": 4}]
+
+
+def test_train_router_dispatches_quality_floor_options(monkeypatch):
+    calls = []
+    monkeypatch.setattr("gullivers_router.training.train_router", lambda *args, **kwargs: calls.append((args, kwargs)))
+
+    assert (
+        main(
+            [
+                "train-router",
+                "--out",
+                "artifacts/x",
+                "--val-fraction",
+                "0.25",
+                "--seed",
+                "7",
+                "--quality-floor",
+                "4.0",
+                "--target-pass-rate",
+                "0.97",
+            ]
+        )
+        == 0
+    )
+
+    [(args, kwargs)] = calls
+    assert str(args[0]) == "artifacts\\x"
+    assert kwargs == {"val_fraction": 0.25, "seed": 7, "quality_floor": 4.0, "target_pass_rate": 0.97}

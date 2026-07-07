@@ -1,8 +1,8 @@
-"""The routing model: a calibrated logistic classifier over query embeddings.
+"""The routing model: a quality-floor risk classifier over query embeddings.
 
-Given a prompt's embedding it predicts ``P(cloud)`` -- the probability the cloud model beats the
-local one by a useful margin. A single threshold on that probability picks the route, so tuning
-the threshold trades cloud cost against answer quality (see the training-time evaluation).
+Given a prompt's embedding it predicts whether the local model is likely to fall below the
+quality floor while the cloud model can rescue the answer. A single threshold on that probability
+picks the route, so tuning the threshold minimizes cloud calls subject to a quality target.
 
 The model is trained with scikit-learn but reduces to a weight vector and intercept over the
 L2-normalized embedding, so :meth:`RouterModel.to_numpy` exports it to a small ``.npz`` the runtime
@@ -18,36 +18,36 @@ import numpy as np
 if TYPE_CHECKING:
     from pathlib import Path
 
-DEFAULT_C = 1.0
+DEFAULT_REGULARIZATION = 1.0
 DEFAULT_ALPHA = 0.5
 MAX_ITER = 1000
 
 
 class RouterModel:
-    """Logistic regression over L2-normalized embeddings, predicting ``P(cloud)``."""
+    """Logistic regression over L2-normalized embeddings, predicting ``P(needs_cloud)``."""
 
-    def __init__(self, *, c: float = DEFAULT_C) -> None:
-        """Configure regularization strength ``c`` (sklearn's inverse-L2 ``C``)."""
+    def __init__(self, *, regularization: float = DEFAULT_REGULARIZATION) -> None:
+        """Configure regularization strength."""
         from sklearn.linear_model import LogisticRegression
         from sklearn.pipeline import make_pipeline
         from sklearn.preprocessing import Normalizer
 
         self._pipeline = make_pipeline(
             Normalizer(norm="l2"),
-            LogisticRegression(C=c, class_weight="balanced", max_iter=MAX_ITER),
+            LogisticRegression(C=regularization, class_weight="balanced", max_iter=MAX_ITER),
         )
 
     def fit(self, x: np.ndarray, y: np.ndarray, sample_weight: np.ndarray | None = None) -> RouterModel:
-        """Fit on embeddings ``x`` and 0/1 labels ``y``, optionally weighting samples."""
+        """Fit on embeddings ``x`` and 0/1 ``needs_cloud`` targets."""
         self._pipeline.fit(x, y, logisticregression__sample_weight=sample_weight)
         return self
 
     def predict_proba(self, x: np.ndarray) -> np.ndarray:
-        """Return ``P(cloud)`` for each row of ``x``."""
+        """Return ``P(needs_cloud)`` for each row of ``x``."""
         return self._pipeline.predict_proba(x)[:, 1]
 
     def route(self, x: np.ndarray, alpha: float = DEFAULT_ALPHA) -> np.ndarray:
-        """Return 1 (cloud) where ``P(cloud) >= alpha``, else 0 (local)."""
+        """Return 1 (cloud) where predicted risk is at least ``alpha``."""
         return (self.predict_proba(x) >= alpha).astype(int)
 
     def save(self, path: Path) -> None:

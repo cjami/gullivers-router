@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from gullivers_router.inference.base import DEFAULT_INFERENCE_SEED
 from gullivers_router.inference.truncation import EMBEDDING_CONTEXT_LIMIT, truncate_head_tail
 
 if TYPE_CHECKING:
@@ -56,13 +57,17 @@ class LlamaCppChat:
                 n_ctx=self._n_ctx,
                 n_gpu_layers=self._n_gpu_layers,
                 flash_attn=self._flash_attn,
+                seed=DEFAULT_INFERENCE_SEED,
                 verbose=False,
             )
         return self._model
 
     def complete(self, messages: Sequence[Message]) -> str:
         """Generate a response for a single prompt."""
-        result = self._load().create_chat_completion(messages=[m.as_dict() for m in messages])
+        result = self._load().create_chat_completion(
+            messages=[m.as_dict() for m in messages],
+            seed=DEFAULT_INFERENCE_SEED,
+        )
         return result["choices"][0]["message"].get("content") or ""
 
 
@@ -84,6 +89,7 @@ class LlamaCppEmbedder:
                 filename=self._config.filename,
                 n_ctx=self._n_ctx,
                 embedding=True,
+                seed=DEFAULT_INFERENCE_SEED,
                 verbose=False,
             )
         return self._model

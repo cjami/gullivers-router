@@ -1,4 +1,4 @@
-"""Orchestrate the offline dataset build: select -> generate -> judge -> label.
+"""Orchestrate the offline dataset build: select -> generate -> judge -> training rows.
 
 Every stage persists its output keyed by prompt id and short-circuits once complete, so the
 whole run is idempotent and resumable: rerun after any interruption and it continues from the
@@ -19,7 +19,7 @@ from gullivers_router.training.dataset import load_prompts, load_prompts_file, s
 from gullivers_router.training.embed import run_embed
 from gullivers_router.training.generate import DEFAULT_CONCURRENCY, run_cloud, run_local
 from gullivers_router.training.judge import load_judgements, run_judge
-from gullivers_router.training.labels import DEFAULT_MARGIN, build_labels
+from gullivers_router.training.labels import build_labels
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -59,7 +59,7 @@ class Artifacts:
 
     @property
     def labels(self) -> Path:
-        """Final labelled training rows."""
+        """Final router training rows."""
         return self.root / "labels.jsonl"
 
     @property
@@ -96,11 +96,10 @@ def run_pipeline(
     samples_per_category: int,
     out: Path,
     *,
-    margin: int = DEFAULT_MARGIN,
     stages: Sequence[str] = STAGES,
     workers: int = DEFAULT_CONCURRENCY,
 ) -> None:
-    """Build the labelled training dataset, resuming any unfinished stage."""
+    """Build the router training dataset, resuming any unfinished stage."""
     settings = Settings.from_env()
     artifacts = Artifacts(out)
 
@@ -120,8 +119,8 @@ def run_pipeline(
         run_judge(pairs, build_chat_model(settings.judge), artifacts.judge, max_workers=workers)
 
     if "labels" in stages:
-        build_labels(prompts, load_judgements(artifacts.judge), artifacts.labels, margin)
-        print(f"wrote labels -> {artifacts.labels}")
+        build_labels(prompts, load_judgements(artifacts.judge), artifacts.labels)
+        print(f"wrote router training rows -> {artifacts.labels}")
 
     if "embed" in stages:
         run_embed(prompts, build_embedding_model(settings.embedding), artifacts.embeddings)

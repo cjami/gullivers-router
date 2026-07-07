@@ -10,6 +10,8 @@ if TYPE_CHECKING:
     from gullivers_router.config import ModelConfig
     from gullivers_router.inference.base import Message
 
+from gullivers_router.inference.base import DEFAULT_INFERENCE_SEED
+
 
 class OpenAICompatChat:
     """Single-call chat completion over an OpenAI-compatible HTTP API."""
@@ -34,5 +36,6 @@ class OpenAICompatChat:
         response = self._get_client().chat.completions.create(
             model=self._config.model,
             messages=[m.as_dict() for m in messages],
+            seed=DEFAULT_INFERENCE_SEED,
         )
         return response.choices[0].message.content or ""

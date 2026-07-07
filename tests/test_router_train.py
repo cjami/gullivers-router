@@ -3,7 +3,16 @@ import numpy as np
 from gullivers_router.router.model import RouterModel
 from gullivers_router.training import store
 from gullivers_router.training.pipeline import Artifacts
-from gullivers_router.training.router import train_router
+from gullivers_router.training.router import _needs_cloud, train_router
+
+
+def test_needs_cloud_only_when_local_fails_and_cloud_passes():
+    local_scores = np.array([3.0, 3.0, 4.0, 5.0])
+    cloud_scores = np.array([4.0, 3.0, 5.0, 3.0])
+
+    needs_cloud = _needs_cloud(local_scores, cloud_scores, quality_floor=4.0)
+
+    assert needs_cloud.tolist() == [1, 0, 0, 0]
 
 
 def _write_dataset(root, n_per_category=30):
@@ -15,7 +24,7 @@ def _write_dataset(root, n_per_category=30):
             prompt_id = f"{category}-{i}"
             centre = 1.0 if cloud_wins else -1.0
             store.append(artifacts.embeddings, {"id": prompt_id, "embedding": (rng.normal(centre, 0.3, 4)).tolist()})
-            local_score, cloud_score = (3, 9) if cloud_wins else (7, 7)
+            local_score, cloud_score = (3, 5) if cloud_wins else (5, 5)
             store.append(
                 artifacts.labels,
                 {
@@ -23,7 +32,6 @@ def _write_dataset(root, n_per_category=30):
                     "category": category,
                     "local_score": local_score,
                     "cloud_score": cloud_score,
-                    "label": 1 if cloud_wins else 0,
                 },
             )
     return artifacts
@@ -37,8 +45,10 @@ def test_train_router_writes_artifacts_and_metrics(tmp_path):
     assert artifacts.router_model.exists()
     assert artifacts.router_weights.exists()
     assert store.read_json(artifacts.router_metrics) == metrics
-    assert metrics["selected_variant"] in {"hard", "soft"}
+    assert metrics["selected_regularization"] in {0.01, 0.1, 1.0, 10.0, 100.0}
     assert metrics["n_train"] + metrics["n_val"] == metrics["n_total"]
+    assert metrics["quality_floor"] == 4.0
+    assert metrics["target_pass_rate"] == 0.98
 
 
 def test_train_router_separates_easy_categories(tmp_path):

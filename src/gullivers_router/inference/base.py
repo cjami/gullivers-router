@@ -9,6 +9,8 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+DEFAULT_INFERENCE_SEED = 1
+
 
 class Provider(StrEnum):
     """Source that backs a model role."""

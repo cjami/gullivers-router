@@ -1,7 +1,7 @@
 """Resumable embedding of the training prompts (outline §3).
 
 Embeddings are produced once and cached keyed by prompt id, so the router-training stage can
-join them against the labels without re-running the embedder. Generation is sequential (a single
+join them against the score-delta rows without re-running the embedder. Generation is sequential (a single
 local GGUF cannot batch-decode) and appends each vector as it lands, so a crash costs at most the
 in-flight item and a rerun resumes from the gap.
 """

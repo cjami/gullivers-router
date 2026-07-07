@@ -3,7 +3,7 @@ import collections
 from gullivers_router.inference.base import Message, Role
 from gullivers_router.training import generate, store
 from gullivers_router.training.dataset import Category, Prompt
-from gullivers_router.training.generate import _complete_with_retry, run_cloud, run_local
+from gullivers_router.training.generate import complete_with_retry, run_cloud, run_local
 
 
 class FakeChat:
@@ -83,7 +83,7 @@ def test_complete_with_retry_reraises_after_exhausting_attempts(monkeypatch):
     model = FlakyChat(fail_text="x", fail_times=99)
 
     try:
-        _complete_with_retry(model, [Message(Role.USER, "x")])
+        complete_with_retry(model, [Message(Role.USER, "x")])
     except RuntimeError:
         pass
     else:

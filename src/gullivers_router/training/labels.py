@@ -1,4 +1,4 @@
-"""Turn judge scores into 0/1 routing labels (outline §2, Label Engineering)."""
+"""Turn judge outputs into router training rows."""
 
 from __future__ import annotations
 
@@ -13,23 +13,13 @@ if TYPE_CHECKING:
     from gullivers_router.training.dataset import Prompt
     from gullivers_router.training.judge import Judgement
 
-LOCAL_LABEL = 0
-CLOUD_LABEL = 1
-DEFAULT_MARGIN = 2
-
-
-def label(local_score: int, cloud_score: int, margin: int = DEFAULT_MARGIN) -> int:
-    """Return 1 (route to cloud) when cloud beats local by ``margin``, else 0 (local)."""
-    return CLOUD_LABEL if cloud_score - local_score >= margin else LOCAL_LABEL
-
 
 def build_labels(
     prompts: Sequence[Prompt],
     judgements: Sequence[Judgement],
     out: Path,
-    margin: int = DEFAULT_MARGIN,
 ) -> None:
-    """Write final training rows, skipping unscored judgements and already-labelled ids."""
+    """Write router training rows, skipping unscored judgements and already-written ids."""
     prompt_by_id = {prompt.id: prompt for prompt in prompts}
     done = store.completed_ids(out)
     for judgement in judgements:
@@ -45,6 +35,10 @@ def build_labels(
                 "category": prompt.category.value,
                 "local_score": judgement.local_score,
                 "cloud_score": judgement.cloud_score,
-                "label": label(judgement.local_score, judgement.cloud_score, margin),
+                "local_rationale": judgement.local_rationale,
+                "cloud_rationale": judgement.cloud_rationale,
+                "local_quality": judgement.local_quality,
+                "cloud_quality": judgement.cloud_quality,
+                "preferred_source": judgement.preferred_source,
             },
         )
