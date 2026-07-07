@@ -8,6 +8,7 @@ id as it lands, so a crash costs at most the in-flight work and a rerun resumes 
 
 from __future__ import annotations
 
+import random
 import time
 from concurrent import futures
 from threading import Lock
@@ -24,7 +25,9 @@ if TYPE_CHECKING:
     from gullivers_router.training.dataset import Prompt
 
 DEFAULT_CONCURRENCY = 8
-MAX_ATTEMPTS = 3
+MAX_ATTEMPTS = 6
+_BACKOFF_BASE_SECONDS = 1.0
+_BACKOFF_CAP_SECONDS = 30.0
 
 
 def run_local(prompts: Sequence[Prompt], model: ChatModel, out: Path) -> None:
@@ -94,13 +97,14 @@ def run_concurrent(  # noqa: PLR0913 - each argument is a distinct orchestration
 
 
 def _complete_with_retry(model: ChatModel, messages: Sequence[Message]) -> str:
-    """Call the model, retrying transient failures with exponential backoff."""
+    """Call the model, retrying transient failures (e.g. 429s) with jittered backoff."""
     for attempt in range(MAX_ATTEMPTS):
         try:
             return model.complete(messages)
         except Exception:
             if attempt + 1 == MAX_ATTEMPTS:
                 raise
-            time.sleep(2**attempt)
+            delay = min(_BACKOFF_BASE_SECONDS * 2**attempt, _BACKOFF_CAP_SECONDS)
+            time.sleep(delay + random.uniform(0, delay))  # noqa: S311 - jitter, not security
     message = "retry loop exited without returning"
     raise RuntimeError(message)  # pragma: no cover
