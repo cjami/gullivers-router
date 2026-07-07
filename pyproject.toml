@@ -32,6 +32,8 @@ dev = [
 ]
 training = [
     "datasets",
+    "joblib",
+    "scikit-learn",
     "tqdm",
 ]
 

@@ -12,10 +12,11 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from gullivers_router.config import Settings
-from gullivers_router.inference.factory import build_chat_model
+from gullivers_router.inference.factory import build_chat_model, build_embedding_model
 from gullivers_router.training import store
 from gullivers_router.training.combine import align_pairs
 from gullivers_router.training.dataset import load_prompts, load_prompts_file, save_prompts
+from gullivers_router.training.embed import run_embed
 from gullivers_router.training.generate import DEFAULT_CONCURRENCY, run_cloud, run_local
 from gullivers_router.training.judge import load_judgements, run_judge
 from gullivers_router.training.labels import DEFAULT_MARGIN, build_labels
@@ -27,7 +28,7 @@ if TYPE_CHECKING:
     from gullivers_router.training.dataset import Prompt
 
 DEFAULT_OUT = "artifacts/training"
-STAGES = ("local", "cloud", "judge", "labels")
+STAGES = ("local", "cloud", "judge", "labels", "embed")
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,6 +61,26 @@ class Artifacts:
     def labels(self) -> Path:
         """Final labelled training rows."""
         return self.root / "labels.jsonl"
+
+    @property
+    def embeddings(self) -> Path:
+        """Query embeddings keyed by prompt id, for router training."""
+        return self.root / "embeddings.jsonl"
+
+    @property
+    def router_model(self) -> Path:
+        """The fitted sklearn router pipeline (joblib)."""
+        return self.root / "router.joblib"
+
+    @property
+    def router_weights(self) -> Path:
+        """The exported numpy weights the runtime scores with."""
+        return self.root / "router.npz"
+
+    @property
+    def router_metrics(self) -> Path:
+        """The router's cost-quality evaluation report."""
+        return self.root / "router_metrics.json"
 
 
 def _select(artifacts: Artifacts, samples_per_category: int) -> list[Prompt]:
@@ -101,3 +122,6 @@ def run_pipeline(
     if "labels" in stages:
         build_labels(prompts, load_judgements(artifacts.judge), artifacts.labels, margin)
         print(f"wrote labels -> {artifacts.labels}")
+
+    if "embed" in stages:
+        run_embed(prompts, build_embedding_model(settings.embedding), artifacts.embeddings)

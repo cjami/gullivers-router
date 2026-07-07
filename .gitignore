@@ -46,3 +46,4 @@ tmp/
 
 # Claude
 .claude/
+.agents/

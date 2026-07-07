@@ -9,14 +9,18 @@ from gullivers_router.training.dataset import SAMPLES_PER_CATEGORY, Category, Pr
 from gullivers_router.training.generate import DEFAULT_CONCURRENCY
 from gullivers_router.training.labels import DEFAULT_MARGIN
 from gullivers_router.training.pipeline import DEFAULT_OUT, STAGES, run_pipeline
+from gullivers_router.training.router import DEFAULT_SEED, DEFAULT_VAL_FRACTION, train_router
 
 __all__ = [
+    "DEFAULT_SEED",
+    "DEFAULT_VAL_FRACTION",
     "Category",
     "Prompt",
     "ResponsePair",
     "align_pairs",
     "load_prompts",
     "train",
+    "train_router",
 ]
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 
 from gullivers_router import __version__, router, training
 
@@ -21,6 +22,7 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command")
     subparsers.add_parser("run", help="Serve the runtime router.")
     _add_train_parser(subparsers)
+    _add_train_router_parser(subparsers)
     return parser
 
 
@@ -56,6 +58,27 @@ def _add_train_parser(subparsers: argparse._SubParsersAction) -> None:
     )
 
 
+def _add_train_router_parser(subparsers: argparse._SubParsersAction) -> None:
+    router_parser = subparsers.add_parser("train-router", help="Train the routing model from labels and embeddings.")
+    router_parser.add_argument(
+        "--out",
+        default=training.DEFAULT_OUT,
+        help="Directory holding labels.jsonl and embeddings.jsonl (and where the router is written).",
+    )
+    router_parser.add_argument(
+        "--val-fraction",
+        type=float,
+        default=training.DEFAULT_VAL_FRACTION,
+        help="Fraction of prompts held out for cost-quality evaluation.",
+    )
+    router_parser.add_argument(
+        "--seed",
+        type=int,
+        default=training.DEFAULT_SEED,
+        help="Random seed for the stratified split and cross-validation.",
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     """Run the command-line interface."""
     parser = build_parser()
@@ -70,6 +93,8 @@ def main(argv: list[str] | None = None) -> int:
             stages=tuple(stage.strip() for stage in args.stages.split(",") if stage.strip()),
             workers=args.workers,
         )
+    elif args.command == "train-router":
+        training.train_router(Path(args.out), val_fraction=args.val_fraction, seed=args.seed)
     else:
         parser.print_help()
     return 0
