@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from gullivers_router.inference.base import DEFAULT_INFERENCE_SEED
 from gullivers_router.router.model import RouterModel
 from gullivers_router.training import evaluate, store
 from gullivers_router.training.pipeline import Artifacts
@@ -20,7 +21,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 DEFAULT_VAL_FRACTION = 0.2
-DEFAULT_SEED = 0
+DEFAULT_SEED = DEFAULT_INFERENCE_SEED
 DEFAULT_QUALITY_FLOOR = 4.0
 DEFAULT_TARGET_PASS_RATE = 0.98
 _REGULARIZATION_GRID = (0.01, 0.1, 1.0, 10.0, 100.0)

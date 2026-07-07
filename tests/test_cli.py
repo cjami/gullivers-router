@@ -1,4 +1,5 @@
 from gullivers_router.cli import build_parser, main
+from gullivers_router.inference.base import DEFAULT_INFERENCE_SEED
 
 
 def test_main_returns_success():
@@ -50,3 +51,13 @@ def test_train_router_dispatches_quality_floor_options(monkeypatch):
     [(args, kwargs)] = calls
     assert str(args[0]) == "artifacts\\x"
     assert kwargs == {"val_fraction": 0.25, "seed": 7, "quality_floor": 4.0, "target_pass_rate": 0.97}
+
+
+def test_train_router_default_seed_matches_global_seed(monkeypatch):
+    calls = []
+    monkeypatch.setattr("gullivers_router.training.train_router", lambda *args, **kwargs: calls.append((args, kwargs)))
+
+    assert main(["train-router", "--out", "artifacts/x"]) == 0
+
+    [(_, kwargs)] = calls
+    assert kwargs["seed"] == DEFAULT_INFERENCE_SEED
