@@ -6,8 +6,29 @@ heavy-duty cloud AI based on query difficulty.
 ## Setup
 
 ```sh
-uv sync
+make setup   # uv sync
+cp .env.example .env   # then fill in HF_TOKEN and FIREWORKS_API_KEY
 ```
+
+`make setup` installs `llama-cpp-python` from a prebuilt **Vulkan** wheel (pinned to
+`https://abetlen.github.io/llama-cpp-python/whl/vulkan` in `pyproject.toml`). If no wheel
+matches your platform, build from source instead:
+
+```sh
+CMAKE_ARGS="-DGGML_VULKAN=on" uv pip install --no-binary llama-cpp-python llama-cpp-python
+```
+
+Models are downloaded automatically from HuggingFace on first use, using the repo id and
+filename configured per role in `.env` (see `.env.example`). Each role — local generation,
+embeddings, runtime cloud, and the training judge — can point at any supported provider
+(`llama`, `openai`, or `fireworks`).
+
+## Usage
+
+| Command                        | Description                                       |
+| ------------------------------ | ------------------------------------------------- |
+| `uv run gullivers-router run`  | Serve the runtime router (local vs cloud).        |
+| `uv run gullivers-router train`| Train the matrix-factorization router (offline).  |
 
 ## Development
 

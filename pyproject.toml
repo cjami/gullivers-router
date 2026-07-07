@@ -9,13 +9,19 @@ description = "A low-cost routing system that splits traffic between a free loca
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "huggingface-hub",
+    "llama-cpp-python",
+    "numpy",
+    "openai",
+    "python-dotenv",
+]
 
 [project.scripts]
 gullivers-router = "gullivers_router.cli:main"
 
 [tool.uv]
-default-groups = ["dev"]
+default-groups = ["dev", "training"]
 
 [dependency-groups]
 dev = [
@@ -24,6 +30,18 @@ dev = [
     "ruff",
     "ty",
 ]
+training = [
+    "datasets",
+    "fireworks-ai",
+]
+
+[[tool.uv.index]]
+name = "llama-vulkan"
+url = "https://abetlen.github.io/llama-cpp-python/whl/vulkan"
+explicit = true
+
+[tool.uv.sources]
+llama-cpp-python = { index = "llama-vulkan" }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -46,9 +64,16 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = [
     "ANN001", # Pytest fixture annotations add noise to small tests.
+    "ANN002", # Test helper *args annotations add noise.
+    "ANN003", # Test helper **kwargs annotations add noise.
     "ANN201", # Test functions do not need return annotations when they only assert behavior.
+    "ANN202", # Local test helpers do not need return annotations.
+    "ANN204", # Test double __init__ methods do not need return annotations.
     "D100", # Test modules can be named clearly without module docstrings.
+    "D101", # Test double classes do not need docstrings.
+    "D102", # Test double methods do not need docstrings.
     "D103", # Test function names describe behavior without extra docstrings.
+    "D107", # Test double __init__ methods do not need docstrings.
     "PLR2004", # Literal expected values keep small tests readable.
     "S101", # Pytest assertions are the standard test assertion style.
 ]
