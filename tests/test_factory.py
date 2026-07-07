@@ -3,7 +3,6 @@ import pytest
 from gullivers_router.config import ModelConfig
 from gullivers_router.inference import factory
 from gullivers_router.inference.base import Provider
-from gullivers_router.inference.fireworks_batch import FireworksBatchChat
 from gullivers_router.inference.llama_cpp import LlamaCppChat, LlamaCppEmbedder
 from gullivers_router.inference.openai_compat import OpenAICompatChat
 
@@ -29,12 +28,3 @@ def test_build_embedding_model_rejects_cloud_provider():
     cfg = _cfg(Provider.FIREWORKS, api_key="k", model="m")
     with pytest.raises(ValueError, match="embedding"):
         factory.build_embedding_model(cfg)
-
-
-def test_build_batch_chat_model_fireworks_uses_batch_api():
-    cfg = _cfg(Provider.FIREWORKS, api_key="k", model="m")
-    assert isinstance(factory.build_batch_chat_model(cfg), FireworksBatchChat)
-
-
-def test_build_batch_chat_model_local_loops():
-    assert isinstance(factory.build_batch_chat_model(_cfg(Provider.LLAMA)), LlamaCppChat)

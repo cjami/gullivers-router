@@ -36,7 +36,3 @@ class OpenAICompatChat:
             messages=[m.as_dict() for m in messages],
         )
         return response.choices[0].message.content or ""
-
-    def complete_batch(self, requests: Sequence[Sequence[Message]]) -> list[str]:
-        """Sequential fallback so any OpenAI-compatible endpoint supports batching."""
-        return [self.complete(request) for request in requests]

@@ -39,6 +39,7 @@ outline.md
 Thumbs.db
 
 # Runtime outputs
+artifacts/
 outputs/
 tmp/
 *.log

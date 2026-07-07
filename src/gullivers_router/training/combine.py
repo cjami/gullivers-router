@@ -1,16 +1,13 @@
-"""Combine local and cloud batch generations into aligned pair records."""
+"""Align local and cloud generations into judge-ready pairs by prompt id."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from gullivers_router.inference.base import user_message
-
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
 
-    from gullivers_router.inference.base import BatchChatModel
     from gullivers_router.training.dataset import Prompt
 
 
@@ -23,20 +20,22 @@ class ResponsePair:
     cloud_response: str
 
 
-def generate_pairwise(
+def align_pairs(
     prompts: Sequence[Prompt],
-    local: BatchChatModel,
-    cloud: BatchChatModel,
+    local_responses: Mapping[str, str],
+    cloud_responses: Mapping[str, str],
 ) -> list[ResponsePair]:
-    """Run one prompt list through both models and zip results by index.
+    """Join responses to prompts by id, keeping only prompts answered by both models.
 
-    Depends only on the ``BatchChatModel`` protocol, so the local (looped) and
-    cloud (Fireworks Batch API) backends stay fully decoupled.
+    Aligning by id (not position) means a missing or failed generation drops a single pair
+    without shifting the others, so partial results from a resumed run stay consistent.
     """
-    requests = [user_message(prompt.text) for prompt in prompts]
-    local_responses = local.complete_batch(requests)
-    cloud_responses = cloud.complete_batch(requests)
     return [
-        ResponsePair(prompt=prompt, local_response=local_response, cloud_response=cloud_response)
-        for prompt, local_response, cloud_response in zip(prompts, local_responses, cloud_responses, strict=True)
+        ResponsePair(
+            prompt=prompt,
+            local_response=local_responses[prompt.id],
+            cloud_response=cloud_responses[prompt.id],
+        )
+        for prompt in prompts
+        if prompt.id in local_responses and prompt.id in cloud_responses
     ]

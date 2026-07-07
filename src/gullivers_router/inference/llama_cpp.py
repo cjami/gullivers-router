@@ -12,7 +12,8 @@ if TYPE_CHECKING:
     from gullivers_router.config import ModelConfig
     from gullivers_router.inference.base import Message
 
-DEFAULT_CHAT_CONTEXT = 8192
+DEFAULT_CHAT_CONTEXT = 4096
+OFFLOAD_ALL_LAYERS = -1
 
 
 def _require_repo_id(config: ModelConfig) -> str:
@@ -25,10 +26,24 @@ def _require_repo_id(config: ModelConfig) -> str:
 class LlamaCppChat:
     """Chat completion from a locally hosted GGUF model."""
 
-    def __init__(self, config: ModelConfig, *, n_ctx: int = DEFAULT_CHAT_CONTEXT) -> None:
-        """Configure the model; the GGUF loads lazily on first use."""
+    def __init__(
+        self,
+        config: ModelConfig,
+        *,
+        n_ctx: int = DEFAULT_CHAT_CONTEXT,
+        n_gpu_layers: int = OFFLOAD_ALL_LAYERS,
+        flash_attn: bool = True,
+    ) -> None:
+        """Configure the model; the GGUF loads lazily on first use.
+
+        ``n_gpu_layers`` defaults to offloading every layer to the GPU (llama.cpp's own
+        default is CPU-only, orders of magnitude slower for a 31B model). ``flash_attn``
+        keeps Gemma's sliding-window KV cache compact so weights plus cache fit in VRAM.
+        """
         self._config = config
         self._n_ctx = n_ctx
+        self._n_gpu_layers = n_gpu_layers
+        self._flash_attn = flash_attn
         self._model = None
 
     def _load(self):  # noqa: ANN202
@@ -39,6 +54,8 @@ class LlamaCppChat:
                 repo_id=_require_repo_id(self._config),
                 filename=self._config.filename,
                 n_ctx=self._n_ctx,
+                n_gpu_layers=self._n_gpu_layers,
+                flash_attn=self._flash_attn,
                 verbose=False,
             )
         return self._model
@@ -47,12 +64,6 @@ class LlamaCppChat:
         """Generate a response for a single prompt."""
         result = self._load().create_chat_completion(messages=[m.as_dict() for m in messages])
         return result["choices"][0]["message"].get("content") or ""
-
-    def complete_batch(self, requests: Sequence[Sequence[Message]]) -> list[str]:
-        """Generate responses sequentially; a single GPU cannot batch decode."""
-        from tqdm import tqdm
-
-        return [self.complete(request) for request in tqdm(requests, desc="local generation")]
 
 
 class LlamaCppEmbedder:

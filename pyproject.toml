@@ -32,7 +32,7 @@ dev = [
 ]
 training = [
     "datasets",
-    "fireworks-ai",
+    "tqdm",
 ]
 
 [[tool.uv.index]]
@@ -69,6 +69,11 @@ ignore = [
     "ANN201", # Test functions do not need return annotations when they only assert behavior.
     "ANN202", # Local test helpers do not need return annotations.
     "ANN204", # Test double __init__ methods do not need return annotations.
+    "ARG001", # Test double functions mirror real signatures with unused arguments.
+    "ARG002", # Test double methods mirror real signatures with unused arguments.
+    "ARG005", # Monkeypatch lambdas mirror real signatures with unused arguments.
+    "EM101", # Test doubles may raise literal errors inline.
+    "SLF001", # Tests may assert on private attributes to verify construction.
     "D100", # Test modules can be named clearly without module docstrings.
     "D101", # Test double classes do not need docstrings.
     "D102", # Test double methods do not need docstrings.

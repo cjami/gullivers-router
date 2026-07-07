@@ -41,7 +41,7 @@ _ROLE_DEFAULTS: dict[str, _RoleDefaults] = {
     "LOCAL": _RoleDefaults(
         provider=Provider.LLAMA,
         repo_id="google/gemma-4-31B-it-qat-q4_0-gguf",
-        filename="*q4_0.gguf",
+        filename="*q4_0-it.gguf",
     ),
     "EMBEDDING": _RoleDefaults(
         provider=Provider.LLAMA,
@@ -55,7 +55,7 @@ _ROLE_DEFAULTS: dict[str, _RoleDefaults] = {
     ),
     "JUDGE": _RoleDefaults(
         provider=Provider.FIREWORKS,
-        model="accounts/fireworks/models/glm-5.2",
+        model="accounts/fireworks/models/glm-5p2",
         base_url=FIREWORKS_BASE_URL,
     ),
 }

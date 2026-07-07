@@ -56,18 +56,6 @@ class EmbeddingModel(Protocol):
         ...
 
 
-@runtime_checkable
-class BatchChatModel(Protocol):
-    """A model that answers many prompts in one call (training path).
-
-    Results are returned aligned to ``requests`` by index.
-    """
-
-    def complete_batch(self, requests: Sequence[Sequence[Message]]) -> list[str]:
-        """Return answers for every request, aligned to input order."""
-        ...
-
-
 def user_message(text: str) -> list[Message]:
     """Wrap raw prompt text as a single-turn user message list."""
     return [Message(Role.USER, text)]

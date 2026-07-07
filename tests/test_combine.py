@@ -1,25 +1,28 @@
-from gullivers_router.training.combine import generate_pairwise
+from gullivers_router.training.combine import align_pairs
 from gullivers_router.training.dataset import Category, Prompt
 
 
-class FakeBatchModel:
-    def __init__(self, prefix):
-        self.prefix = prefix
-
-    def complete_batch(self, requests):
-        return [f"{self.prefix}:{request[0].content}" for request in requests]
+def _prompt(prompt_id):
+    return Prompt(id=prompt_id, category=Category.MATHEMATICAL_REASONING, text=prompt_id)
 
 
-def test_generate_pairwise_aligns_and_preserves_prompt():
-    prompts = [
-        Prompt(id="a", category=Category.MATHEMATICAL_REASONING, text="2+2"),
-        Prompt(id="b", category=Category.CODE_GENERATION, text="write fn"),
-    ]
+def test_align_pairs_joins_by_id_regardless_of_order():
+    prompts = [_prompt("a"), _prompt("b")]
+    local = {"b": "local-b", "a": "local-a"}
+    cloud = {"a": "cloud-a", "b": "cloud-b"}
 
-    pairs = generate_pairwise(prompts, FakeBatchModel("local"), FakeBatchModel("cloud"))
+    pairs = align_pairs(prompts, local, cloud)
 
     assert [pair.prompt.id for pair in pairs] == ["a", "b"]
-    assert pairs[0].local_response == "local:2+2"
-    assert pairs[0].cloud_response == "cloud:2+2"
-    assert pairs[1].local_response == "local:write fn"
-    assert pairs[0].prompt.category == Category.MATHEMATICAL_REASONING
+    assert pairs[0].local_response == "local-a"
+    assert pairs[0].cloud_response == "cloud-a"
+
+
+def test_align_pairs_drops_prompts_missing_from_either_side():
+    prompts = [_prompt("a"), _prompt("b"), _prompt("c")]
+    local = {"a": "local-a", "b": "local-b"}
+    cloud = {"a": "cloud-a", "c": "cloud-c"}
+
+    pairs = align_pairs(prompts, local, cloud)
+
+    assert [pair.prompt.id for pair in pairs] == ["a"]

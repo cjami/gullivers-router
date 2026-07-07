@@ -19,6 +19,8 @@ def test_run_dispatches_to_router(monkeypatch):
 
 def test_train_dispatches_to_training(monkeypatch):
     calls = []
-    monkeypatch.setattr("gullivers_router.training.train", lambda: calls.append("train"))
-    assert main(["train"]) == 0
-    assert calls == ["train"]
+    monkeypatch.setattr("gullivers_router.training.train", lambda **kwargs: calls.append(kwargs))
+    assert main(["train", "--samples", "5", "--out", "artifacts/x", "--stages", "local,cloud", "--workers", "4"]) == 0
+    assert calls == [
+        {"samples_per_category": 5, "out": "artifacts/x", "margin": 2, "stages": ("local", "cloud"), "workers": 4}
+    ]

@@ -2,19 +2,30 @@
 
 from __future__ import annotations
 
-from gullivers_router.training.combine import ResponsePair, generate_pairwise
-from gullivers_router.training.dataset import Category, Prompt, load_prompts
+from pathlib import Path
+
+from gullivers_router.training.combine import ResponsePair, align_pairs
+from gullivers_router.training.dataset import SAMPLES_PER_CATEGORY, Category, Prompt, load_prompts
+from gullivers_router.training.generate import DEFAULT_CONCURRENCY
+from gullivers_router.training.labels import DEFAULT_MARGIN
+from gullivers_router.training.pipeline import DEFAULT_OUT, STAGES, run_pipeline
 
 __all__ = [
     "Category",
     "Prompt",
     "ResponsePair",
-    "generate_pairwise",
+    "align_pairs",
     "load_prompts",
     "train",
 ]
 
 
-def train() -> None:
-    """Run the dataset-build and matrix-factorization training pipeline."""
-    print("Training pipeline is not implemented yet.")
+def train(
+    samples_per_category: int = SAMPLES_PER_CATEGORY,
+    out: str = DEFAULT_OUT,
+    margin: int = DEFAULT_MARGIN,
+    stages: tuple[str, ...] = STAGES,
+    workers: int = DEFAULT_CONCURRENCY,
+) -> None:
+    """Build the labelled training dataset (select -> generate -> judge -> label)."""
+    run_pipeline(samples_per_category, Path(out), margin=margin, stages=stages, workers=workers)

@@ -4,8 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from gullivers_router.inference.base import BatchChatModel, ChatModel, EmbeddingModel, Provider
-from gullivers_router.inference.fireworks_batch import FireworksBatchChat
+from gullivers_router.inference.base import ChatModel, EmbeddingModel, Provider
 from gullivers_router.inference.llama_cpp import LlamaCppChat, LlamaCppEmbedder
 from gullivers_router.inference.openai_compat import OpenAICompatChat
 
@@ -37,22 +36,4 @@ def build_embedding_model(config: ModelConfig) -> EmbeddingModel:
             return LlamaCppEmbedder(config)
         case _:
             error = _unsupported("embedding", config)
-            raise error
-
-
-def build_batch_chat_model(config: ModelConfig) -> BatchChatModel:
-    """Batch chat model for the training path.
-
-    Fireworks uses the dedicated Batch API; other providers fall back to their
-    sequential ``complete_batch``.
-    """
-    match config.provider:
-        case Provider.FIREWORKS:
-            return FireworksBatchChat(config)
-        case Provider.LLAMA:
-            return LlamaCppChat(config)
-        case Provider.OPENAI:
-            return OpenAICompatChat(config)
-        case _:
-            error = _unsupported("batch chat", config)
             raise error
