@@ -1,5 +1,7 @@
 from gullivers_router.cli import build_parser, main
 from gullivers_router.inference.base import DEFAULT_INFERENCE_SEED
+from gullivers_router.router import DEFAULT_INPUT, DEFAULT_OUTPUT, DEFAULT_ROUTER_WEIGHTS
+from gullivers_router.training import DEFAULT_CONCURRENCY
 
 
 def test_main_returns_success():
@@ -13,9 +15,45 @@ def test_parser_exposes_program_name():
 
 def test_run_dispatches_to_router(monkeypatch):
     calls = []
-    monkeypatch.setattr("gullivers_router.router.run", lambda: calls.append("run"))
+    monkeypatch.setattr("gullivers_router.router.run", lambda **kwargs: calls.append(kwargs))
+    assert (
+        main(
+            [
+                "run",
+                "--input",
+                "examples/tasks.json",
+                "--output",
+                "artifacts/dev/results.json",
+                "--router-weights",
+                "artifacts/dev/router.npz",
+                "--workers",
+                "3",
+                "--classify-only",
+            ]
+        )
+        == 0
+    )
+    assert len(calls) == 1
+    call = calls[0]
+    assert str(call["input_path"]) == "examples\\tasks.json"
+    assert str(call["output_path"]) == "artifacts\\dev\\results.json"
+    assert str(call["router_weights"]) == "artifacts\\dev\\router.npz"
+    assert call["workers"] == 3
+    assert call["classify_only"] is True
+
+
+def test_run_defaults_match_batch_paths(monkeypatch):
+    calls = []
+    monkeypatch.setattr("gullivers_router.router.run", lambda **kwargs: calls.append(kwargs))
+
     assert main(["run"]) == 0
-    assert calls == ["run"]
+
+    [call] = calls
+    assert call["input_path"] == DEFAULT_INPUT
+    assert call["output_path"] == DEFAULT_OUTPUT
+    assert call["router_weights"] == DEFAULT_ROUTER_WEIGHTS
+    assert call["workers"] == DEFAULT_CONCURRENCY
+    assert call["classify_only"] is False
 
 
 def test_train_dispatches_to_training(monkeypatch):

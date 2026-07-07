@@ -1,0 +1,58 @@
+[
+  {
+    "task_id": "factual-001",
+    "prompt": "Explain why transformer attention is useful for resolving ambiguous pronouns. Use one concise paragraph and include one limitation."
+  },
+  {
+    "task_id": "math-001",
+    "prompt": "A service has 18,400 users in January. Users grow 7% monthly for 5 months, then churn removes 11% of the user base, then growth resumes at 4% monthly for 3 months. What is the final user count, rounded to the nearest whole user? Show the calculation."
+  },
+  {
+    "task_id": "sentiment-001",
+    "prompt": "Classify the sentiment as positive, negative, or mixed, and justify in two sentences: The patch finally fixed the crash, but it made the dashboard load so slowly that my team stopped using it."
+  },
+  {
+    "task_id": "summary-001",
+    "prompt": "Summarise this in exactly 25 words: Edge inference can lower latency and cost, but models deployed locally need careful routing, monitoring, and fallback paths when prompts exceed local capability."
+  },
+  {
+    "task_id": "ner-001",
+    "prompt": "Extract named entities as JSON with keys person, organization, location, and date: On 12 March 2026, Priya Menon met AMD engineers at the London AI Lab before briefing the Open Compute Project."
+  },
+  {
+    "task_id": "debug-001",
+    "prompt": "Find the bug and provide a corrected Python implementation:\n\ndef rolling_average(values, window):\n    result = []\n    for i in range(len(values)):\n        start = i - window\n        chunk = values[start:i]\n        result.append(sum(chunk) / window)\n    return result\n\nThe intended output has one average per complete window only."
+  },
+  {
+    "task_id": "logic-001",
+    "prompt": "Four services A, B, C, and D deploy in four time slots. A must deploy before C. B cannot deploy first or last. D deploys immediately after B. C is not fourth. List every valid deployment order."
+  },
+  {
+    "task_id": "codegen-001",
+    "prompt": "Write a Python function topological_layers(edges) that returns batches of nodes that can run in parallel. Input is an iterable of (before, after) pairs. Include isolated prerequisites, detect cycles with ValueError, and keep each layer sorted."
+  },
+  {
+    "task_id": "trigger-html-slider",
+    "prompt": "Build a complete HTML page that compares two images with a draggable before/after slider, accessible labels, responsive layout, and no external JavaScript dependencies."
+  },
+  {
+    "task_id": "trigger-qgc",
+    "prompt": "Write a Python program that generates a QGroundControl mission JSON file for a drone to fly a 4 metre square at 2 metre altitude around central Seattle, including takeoff, waypoints, and return-to-launch."
+  },
+  {
+    "task_id": "trigger-iso-summary",
+    "prompt": "Summarize ISO 22081 in plain English, including scope, main requirements, and how it changes drawing interpretation for general geometrical tolerances."
+  },
+  {
+    "task_id": "trigger-qgis-debug",
+    "prompt": "I load a very large ECW raster into a QGIS QgsMapCanvas. Each zoom in and out increases RAM usage until the app becomes unstable. Diagnose likely causes and show a corrected PyQGIS approach."
+  },
+  {
+    "task_id": "trigger-spam-json",
+    "prompt": "Classify this message as Spam or Ham and return strict JSON with label and reason: Click here to win a lottery prize if you verify your bank account today."
+  },
+  {
+    "task_id": "trigger-soap-ocaml",
+    "prompt": "Write an OCaml program that calls a SOAP service, builds the XML envelope, sends the HTTP request, handles errors, and parses the response."
+  }
+]

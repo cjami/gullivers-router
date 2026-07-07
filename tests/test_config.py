@@ -27,6 +27,39 @@ def test_shared_fireworks_key_is_reused_across_roles():
     assert settings.judge.api_key == "shared"
 
 
+def test_fireworks_base_url_overrides_role_and_default_urls():
+    settings = Settings.from_env(
+        {
+            "FIREWORKS_BASE_URL": "https://proxy.example/v1",
+            "CLOUD_BASE_URL": "https://role.example/v1",
+            "JUDGE_BASE_URL": "https://judge.example/v1",
+        }
+    )
+
+    assert settings.cloud.base_url == "https://proxy.example/v1"
+    assert settings.judge.base_url == "https://proxy.example/v1"
+
+
+def test_fireworks_base_url_does_not_override_non_fireworks_roles():
+    settings = Settings.from_env(
+        {
+            "FIREWORKS_BASE_URL": "https://proxy.example/v1",
+            "CLOUD_PROVIDER": "openai",
+            "CLOUD_BASE_URL": "https://openai.example/v1",
+            "CLOUD_MODEL": "custom",
+            "CLOUD_API_KEY": "key",
+        }
+    )
+
+    assert settings.cloud.base_url == "https://openai.example/v1"
+
+
+def test_allowed_models_is_ignored_for_now():
+    settings = Settings.from_env({"ALLOWED_MODELS": "allowed-a,allowed-b", "CLOUD_MODEL": "configured-model"})
+
+    assert settings.cloud.model == "configured-model"
+
+
 def test_missing_key_raises_only_when_role_is_built():
     settings = Settings.from_env({"CLOUD_PROVIDER": "openai", "CLOUD_MODEL": "custom"})
     with pytest.raises(ValueError, match="API key"):

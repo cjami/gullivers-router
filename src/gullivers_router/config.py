@@ -68,11 +68,15 @@ def _role_config(env: Mapping[str, str], role: str) -> ModelConfig:
         return env.get(f"{role}_{key}", default)
 
     provider_name = value("PROVIDER", defaults.provider.value)
+    provider = Provider(provider_name)
+    base_url = value("BASE_URL", defaults.base_url)
+    if provider == Provider.FIREWORKS and env.get("FIREWORKS_BASE_URL"):
+        base_url = env["FIREWORKS_BASE_URL"]
     return ModelConfig(
-        provider=Provider(provider_name),
+        provider=provider,
         model=value("MODEL", defaults.model),
         api_key=env.get(f"{role}_API_KEY") or env.get("FIREWORKS_API_KEY"),
-        base_url=value("BASE_URL", defaults.base_url),
+        base_url=base_url,
         repo_id=value("REPO_ID", defaults.repo_id),
         filename=value("FILENAME", defaults.filename),
     )

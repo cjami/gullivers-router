@@ -20,10 +20,43 @@ def build_parser() -> argparse.ArgumentParser:
         version=f"%(prog)s {__version__}",
     )
     subparsers = parser.add_subparsers(dest="command")
-    subparsers.add_parser("run", help="Serve the runtime router.")
+    _add_run_parser(subparsers)
     _add_train_parser(subparsers)
     _add_train_router_parser(subparsers)
     return parser
+
+
+def _add_run_parser(subparsers: argparse._SubParsersAction) -> None:
+    run_parser = subparsers.add_parser("run", help="Run the batch router.")
+    run_parser.add_argument(
+        "--input",
+        type=Path,
+        default=router.DEFAULT_INPUT,
+        help="Tasks JSON file.",
+    )
+    run_parser.add_argument(
+        "--output",
+        type=Path,
+        default=router.DEFAULT_OUTPUT,
+        help="Path for results JSON.",
+    )
+    run_parser.add_argument(
+        "--router-weights",
+        type=Path,
+        default=router.DEFAULT_ROUTER_WEIGHTS,
+        help="Exported numpy router weights.",
+    )
+    run_parser.add_argument(
+        "--workers",
+        type=int,
+        default=training.DEFAULT_CONCURRENCY,
+        help="Concurrent serverless requests for cloud-routed tasks.",
+    )
+    run_parser.add_argument(
+        "--classify-only",
+        action="store_true",
+        help="Write route diagnostics without generating answers.",
+    )
 
 
 def _add_train_parser(subparsers: argparse._SubParsersAction) -> None:
@@ -93,7 +126,13 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.command == "run":
-        router.run()
+        router.run(
+            input_path=args.input,
+            output_path=args.output,
+            router_weights=args.router_weights,
+            workers=args.workers,
+            classify_only=args.classify_only,
+        )
     elif args.command == "train":
         training.train(
             samples_per_category=args.samples,

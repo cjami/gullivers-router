@@ -27,8 +27,27 @@ embeddings, runtime cloud, and the training judge — can point at any supported
 
 | Command                        | Description                                       |
 | ------------------------------ | ------------------------------------------------- |
-| `uv run gullivers-router run`  | Serve the runtime router (local vs cloud).        |
+| `uv run gullivers-router run`  | Run the batch router (local vs cloud).            |
 | `uv run gullivers-router train`| Train the matrix-factorization router (offline).  |
+
+The runtime defaults to the hackathon file contract:
+
+```sh
+uv run gullivers-router run \
+  --input /input/tasks.json \
+  --output /output/results.json \
+  --router-weights artifacts/training/router.npz
+```
+
+For local routing diagnostics without model completions:
+
+```sh
+uv run gullivers-router run \
+  --input examples/tasks.json \
+  --output artifacts/routes.json \
+  --router-weights artifacts/training/router.npz \
+  --classify-only
+```
 
 ## Development
 
