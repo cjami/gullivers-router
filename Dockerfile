@@ -10,10 +10,16 @@ RUN apt-get update \
 
 WORKDIR /build
 COPY pyproject.toml README.md ./
+
+# Compile llama-cpp-python from source in its own layer so a code change does not
+# invalidate the slow build; it is re-run only when pyproject or the base image changes.
+RUN python -m pip install --upgrade pip \
+    && python -m pip install --prefix=/install llama-cpp-python
+
 COPY src ./src
 
-RUN python -m pip install --upgrade pip \
-    && python -m pip install --prefix=/install .
+# Light pure-Python deps and our package; llama-cpp-python is already satisfied.
+RUN python -m pip install --prefix=/install .
 
 FROM python:3.12-slim
 

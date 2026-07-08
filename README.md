@@ -81,6 +81,32 @@ docker run --rm --memory=4g --cpus=2 \
 
 This all-local smoke test writes `outputs/results.json` without requiring Fireworks credentials.
 
+## Publishing to GHCR
+
+`.github/workflows/publish-image.yml` builds the CPU image and pushes it to
+`ghcr.io/<owner>/gullivers-router`. It downloads the two GGUFs from HuggingFace (cached
+between runs), so the runner does not need them committed.
+
+Cut a release by pushing a tag:
+
+```sh
+git tag v1.0
+git push origin v1.0
+```
+
+Each run publishes immutable `:v1.0` and `:sha-<commit>` tags plus a moving `:latest`. Pin the
+evaluation program to an immutable tag so a redeploy never serves stale bytes. To force a clean
+rebuild (ignoring the Docker layer cache), run the workflow manually from the Actions tab with
+`no_cache` enabled.
+
+One-time setup:
+
+- Add an `HF_TOKEN` repository secret whose HuggingFace account has accepted the gated Gemma
+  license; otherwise the model download returns 403.
+- After the first publish, make the package public: repo → Packages → `gullivers-router` →
+  Package settings → Change visibility → Public. It stays public for later pushes and lets the
+  evaluation program pull anonymously even while the repo is private.
+
 ## Development
 
 | Command       | Description                                      |

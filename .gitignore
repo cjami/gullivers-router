@@ -39,7 +39,10 @@ outline.md
 Thumbs.db
 
 # Runtime outputs
-artifacts/
+artifacts/*
+!artifacts/training/
+artifacts/training/*
+!artifacts/training/router.npz
 outputs/
 tmp/
 *.log
