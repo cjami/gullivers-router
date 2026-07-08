@@ -23,8 +23,8 @@ if TYPE_CHECKING:
     from gullivers_router.config import ModelConfig
     from gullivers_router.inference.base import ChatModel, EmbeddingModel
 
-DEFAULT_INPUT = Path("/input/tasks.json")
-DEFAULT_OUTPUT = Path("/output/results.json")
+DEFAULT_INPUT = Path("examples/practice_tasks.json")
+DEFAULT_OUTPUT = Path("outputs/results.json")
 DEFAULT_ROUTER_WEIGHTS = Path("artifacts/training/router.npz")
 LOCAL_ROUTE = "local"
 CLOUD_ROUTE = "cloud"

@@ -42,7 +42,7 @@ def test_run_dispatches_to_router(monkeypatch):
     assert call["classify_only"] is True
 
 
-def test_run_defaults_match_batch_paths(monkeypatch):
+def test_run_defaults_flow_through_to_router(monkeypatch):
     calls = []
     monkeypatch.setattr("gullivers_router.router.run", lambda **kwargs: calls.append(kwargs))
 
