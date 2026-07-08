@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from dotenv import load_dotenv
@@ -27,6 +28,15 @@ class ModelConfig:
     repo_id: str | None = None
     filename: str | None = None
     timeout_seconds: float | None = None
+    n_ctx: int | None = None
+    n_gpu_layers: int | None = None
+    flash_attn: bool | None = None
+    enable_thinking: bool | None = None
+    temperature: float | None = None
+    top_p: float | None = None
+    top_k: int | None = None
+    n_threads: int | None = None
+    model_root: Path | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,18 +46,37 @@ class _RoleDefaults:
     base_url: str | None = None
     repo_id: str | None = None
     filename: str | None = None
+    n_ctx: int | None = None
+    n_gpu_layers: int | None = None
+    flash_attn: bool | None = None
+    enable_thinking: bool | None = None
+    temperature: float | None = None
+    top_p: float | None = None
+    top_k: int | None = None
+    n_threads: int | None = None
+    model_root: Path | None = None
 
 
 _ROLE_DEFAULTS: dict[str, _RoleDefaults] = {
     "LOCAL": _RoleDefaults(
         provider=Provider.LLAMA,
-        repo_id="google/gemma-4-31B-it-qat-q4_0-gguf",
-        filename="*q4_0-it.gguf",
+        repo_id="google/gemma-4-E2B-it-qat-q4_0-gguf",
+        filename="gemma-4-E2B_q4_0-it.gguf",
+        n_ctx=2048,
+        n_gpu_layers=-1,
+        flash_attn=True,
+        enable_thinking=True,
+        temperature=1.0,
+        top_p=0.95,
+        top_k=64,
+        model_root=Path("models"),
     ),
     "EMBEDDING": _RoleDefaults(
         provider=Provider.LLAMA,
         repo_id="ggml-org/embeddinggemma-300M-GGUF",
         filename="*Q8_0.gguf",
+        n_ctx=2048,
+        model_root=Path("models"),
     ),
     "CLOUD": _RoleDefaults(
         provider=Provider.FIREWORKS,
@@ -81,11 +110,44 @@ def _role_config(env: Mapping[str, str], role: str) -> ModelConfig:
         repo_id=value("REPO_ID", defaults.repo_id),
         filename=value("FILENAME", defaults.filename),
         timeout_seconds=_optional_float(value("TIMEOUT_SECONDS", None)),
+        n_ctx=_optional_int(value("N_CTX", _string(defaults.n_ctx))),
+        n_gpu_layers=_optional_int(value("N_GPU_LAYERS", _string(defaults.n_gpu_layers))),
+        flash_attn=_optional_bool(value("FLASH_ATTN", _string(defaults.flash_attn))),
+        enable_thinking=_optional_bool(value("ENABLE_THINKING", _string(defaults.enable_thinking))),
+        temperature=_optional_float(value("TEMPERATURE", _string(defaults.temperature))),
+        top_p=_optional_float(value("TOP_P", _string(defaults.top_p))),
+        top_k=_optional_int(value("TOP_K", _string(defaults.top_k))),
+        n_threads=_optional_int(value("N_THREADS", _string(defaults.n_threads))),
+        model_root=_optional_path(value("MODEL_ROOT", _string(defaults.model_root))),
     )
 
 
 def _optional_float(raw: str | None) -> float | None:
     return float(raw) if raw else None
+
+
+def _optional_int(raw: str | None) -> int | None:
+    return int(raw) if raw else None
+
+
+def _optional_bool(raw: str | None) -> bool | None:
+    if raw is None or raw == "":
+        return None
+    normalized = raw.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    msg = f"invalid boolean value: {raw}"
+    raise ValueError(msg)
+
+
+def _optional_path(raw: str | None) -> Path | None:
+    return Path(raw) if raw else None
+
+
+def _string(value: object | None) -> str | None:
+    return str(value) if value is not None else None
 
 
 @dataclass(frozen=True, slots=True)

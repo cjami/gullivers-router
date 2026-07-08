@@ -21,7 +21,13 @@ def _cfg(provider, **kwargs):
 
 
 def test_build_chat_model_local():
-    assert isinstance(factory.build_chat_model(_cfg(Provider.LLAMA)), LlamaCppChat)
+    chat = factory.build_chat_model(_cfg(Provider.LLAMA))
+
+    assert isinstance(chat, LlamaCppChat)
+    assert chat._enable_thinking is True
+    assert chat._temperature == 1.0
+    assert chat._top_p == 0.95
+    assert chat._top_k == 64
 
 
 def test_build_chat_model_openai_compatible():
@@ -31,6 +37,52 @@ def test_build_chat_model_openai_compatible():
 
 def test_build_embedding_model_local():
     assert isinstance(factory.build_embedding_model(_cfg(Provider.LLAMA)), LlamaCppEmbedder)
+
+
+def test_factory_passes_llama_chat_runtime_options(tmp_path):
+    chat = factory.build_chat_model(
+        _cfg(
+            Provider.LLAMA,
+            n_ctx=2048,
+            n_gpu_layers=0,
+            flash_attn=False,
+            enable_thinking=False,
+            temperature=0.7,
+            top_p=0.8,
+            top_k=32,
+            n_threads=2,
+            model_root=tmp_path,
+        )
+    )
+
+    assert isinstance(chat, LlamaCppChat)
+    assert chat._n_ctx == 2048
+    assert chat._n_gpu_layers == 0
+    assert chat._flash_attn is False
+    assert chat._enable_thinking is False
+    assert chat._temperature == 0.7
+    assert chat._top_p == 0.8
+    assert chat._top_k == 32
+    assert chat._n_threads == 2
+    assert chat._model_root == tmp_path
+
+
+def test_factory_passes_llama_embedder_runtime_options(tmp_path):
+    embedder = factory.build_embedding_model(
+        _cfg(
+            Provider.LLAMA,
+            n_ctx=2048,
+            n_gpu_layers=-1,
+            n_threads=4,
+            model_root=tmp_path,
+        )
+    )
+
+    assert isinstance(embedder, LlamaCppEmbedder)
+    assert embedder._n_ctx == 2048
+    assert embedder._n_gpu_layers == -1
+    assert embedder._n_threads == 4
+    assert embedder._model_root == tmp_path
 
 
 def test_build_embedding_model_rejects_cloud_provider():
@@ -97,8 +149,9 @@ def test_llama_chat_loads_with_global_seed(monkeypatch):
             captured.update(kwargs)
             return cls()
 
-        def create_chat_completion(self, messages, seed):
-            captured["completion_seed"] = seed
+        def create_chat_completion(self, messages, **kwargs):
+            captured["messages"] = messages
+            captured.update(kwargs)
             return {"choices": [{"message": {"content": "ok"}}]}
 
     monkeypatch.setitem(sys.modules, "llama_cpp", SimpleNamespace(Llama=FakeLlama))
@@ -106,7 +159,37 @@ def test_llama_chat_loads_with_global_seed(monkeypatch):
 
     assert chat.complete([Message(Role.USER, "hello")]) == "ok"
     assert captured["seed"] == DEFAULT_INFERENCE_SEED
-    assert captured["completion_seed"] == DEFAULT_INFERENCE_SEED
+    assert captured["temperature"] == 1.0
+    assert captured["top_p"] == 0.95
+    assert captured["top_k"] == 64
+
+
+def test_llama_chat_uses_local_model_before_hugging_face(monkeypatch, tmp_path):
+    captured = {}
+    local_model = tmp_path / "google" / "gemma"
+    local_model.mkdir(parents=True)
+    model_path = local_model / "model.gguf"
+    model_path.write_text("model", encoding="utf-8")
+
+    class FakeLlama:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+        @classmethod
+        def from_pretrained(cls, **_kwargs) -> "FakeLlama":
+            raise AssertionError
+
+        def create_chat_completion(self, messages, **kwargs):
+            captured["messages"] = messages
+            captured.update(kwargs)
+            return {"choices": [{"message": {"content": "ok"}}]}
+
+    monkeypatch.setitem(sys.modules, "llama_cpp", SimpleNamespace(Llama=FakeLlama))
+    chat = LlamaCppChat(_cfg(Provider.LLAMA, repo_id="google/gemma", filename="model.gguf"), model_root=tmp_path)
+
+    assert chat.complete([Message(Role.USER, "hello")]) == "ok"
+    assert captured["model_path"] == str(model_path)
+    assert captured["seed"] == DEFAULT_INFERENCE_SEED
 
 
 def test_llama_chat_sends_schema_response_format(monkeypatch):
@@ -118,9 +201,9 @@ def test_llama_chat_sends_schema_response_format(monkeypatch):
             captured.update(kwargs)
             return cls()
 
-        def create_chat_completion(self, messages, seed, response_format):
-            captured["completion_seed"] = seed
-            captured["response_format"] = response_format
+        def create_chat_completion(self, messages, **kwargs):
+            captured["messages"] = messages
+            captured.update(kwargs)
             return {"choices": [{"message": {"content": '{"answer": "ok"}'}}]}
 
     monkeypatch.setitem(sys.modules, "llama_cpp", SimpleNamespace(Llama=FakeLlama))
@@ -129,6 +212,154 @@ def test_llama_chat_sends_schema_response_format(monkeypatch):
     result = chat.complete_structured([Message(Role.USER, "hello")], StructuredReply)
 
     assert result == StructuredReply(answer="ok")
-    assert captured["completion_seed"] == DEFAULT_INFERENCE_SEED
+    assert captured["seed"] == DEFAULT_INFERENCE_SEED
     assert captured["response_format"]["type"] == "json_object"
     assert captured["response_format"]["schema"]["properties"]["answer"]["type"] == "string"
+    assert captured["temperature"] == 1.0
+    assert captured["top_p"] == 0.95
+    assert captured["top_k"] == 64
+
+
+def test_llama_chat_strips_thinking_sections(monkeypatch):
+    class FakeLlama:
+        @classmethod
+        def from_pretrained(cls, **_kwargs) -> "FakeLlama":
+            return cls()
+
+        def create_chat_completion(self, **_kwargs):
+            return {"choices": [{"message": {"content": "<think>private</think>\nanswer"}}]}
+
+    monkeypatch.setitem(sys.modules, "llama_cpp", SimpleNamespace(Llama=FakeLlama))
+    chat = LlamaCppChat(_cfg(Provider.LLAMA, repo_id="repo", filename="model.gguf"))
+
+    assert chat.complete([Message(Role.USER, "hello")]) == "answer"
+
+
+def test_llama_chat_strips_gemma_thought_channel(monkeypatch):
+    class FakeLlama:
+        @classmethod
+        def from_pretrained(cls, **_kwargs) -> "FakeLlama":
+            return cls()
+
+        def create_chat_completion(self, **_kwargs):
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": "<|channel|>thought hidden reasoning<channel|>\nfinal answer",
+                        }
+                    }
+                ]
+            }
+
+    monkeypatch.setitem(sys.modules, "llama_cpp", SimpleNamespace(Llama=FakeLlama))
+    chat = LlamaCppChat(_cfg(Provider.LLAMA, repo_id="repo", filename="model.gguf"))
+
+    assert chat.complete([Message(Role.USER, "hello")]) == "final answer"
+
+
+def test_llama_structured_chat_strips_thinking_before_parsing(monkeypatch):
+    class FakeLlama:
+        @classmethod
+        def from_pretrained(cls, **_kwargs) -> "FakeLlama":
+            return cls()
+
+        def create_chat_completion(self, **_kwargs):
+            return {"choices": [{"message": {"content": '<think>private</think>\n{"answer": "ok"}'}}]}
+
+    monkeypatch.setitem(sys.modules, "llama_cpp", SimpleNamespace(Llama=FakeLlama))
+    chat = LlamaCppChat(_cfg(Provider.LLAMA, repo_id="repo", filename="model.gguf"))
+
+    assert chat.complete_structured([Message(Role.USER, "hello")], StructuredReply) == StructuredReply(answer="ok")
+
+
+def test_llama_chat_enables_thinking_for_compatible_template(monkeypatch):
+    captured = {}
+
+    class FakeLlama:
+        @classmethod
+        def from_pretrained(cls, **_kwargs) -> "FakeLlama":
+            return cls()
+
+        def __init__(self):
+            self.metadata = {"tokenizer.chat_template": "{% if enable_thinking %}<think>{% endif %}"}
+            self.chat_handler = None
+            self.chat_format = "chat_template.default"
+            self._chat_handlers = {"chat_template.default": self._handler}
+
+        def _handler(self, **kwargs):
+            captured.update(kwargs)
+            return {"choices": [{"message": {"content": "thinking"}}]}
+
+        def create_chat_completion(self, **_kwargs):
+            raise AssertionError
+
+    monkeypatch.setitem(sys.modules, "llama_cpp", SimpleNamespace(Llama=FakeLlama))
+    chat = LlamaCppChat(_cfg(Provider.LLAMA, repo_id="repo", filename="model.gguf"))
+
+    assert chat.complete([Message(Role.USER, "hello")]) == "thinking"
+    assert captured["enable_thinking"] is True
+    assert captured["temperature"] == 1.0
+    assert captured["top_p"] == 0.95
+    assert captured["top_k"] == 64
+    assert captured["llama"] is chat._model
+
+
+def test_llama_chat_ignores_thinking_for_unsupported_template(monkeypatch):
+    captured = {}
+
+    class FakeLlama:
+        @classmethod
+        def from_pretrained(cls, **_kwargs) -> "FakeLlama":
+            return cls()
+
+        def __init__(self):
+            self.metadata = {"tokenizer.chat_template": "{{ messages[0]['content'] }}"}
+
+        def create_chat_completion(self, **kwargs):
+            captured.update(kwargs)
+            return {"choices": [{"message": {"content": "plain"}}]}
+
+    monkeypatch.setitem(sys.modules, "llama_cpp", SimpleNamespace(Llama=FakeLlama))
+    chat = LlamaCppChat(_cfg(Provider.LLAMA, repo_id="repo", filename="model.gguf"))
+
+    assert chat.complete([Message(Role.USER, "hello")]) == "plain"
+    assert "enable_thinking" not in captured
+
+
+def test_llama_embedder_uses_local_model_before_hugging_face(monkeypatch, tmp_path):
+    captured = {}
+    local_model = tmp_path / "ggml-org" / "embeddinggemma-300M-GGUF"
+    local_model.mkdir(parents=True)
+    model_path = local_model / "embeddinggemma-300M-Q8_0.gguf"
+    model_path.write_text("model", encoding="utf-8")
+
+    class FakeLlama:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+        @classmethod
+        def from_pretrained(cls, **_kwargs) -> "FakeLlama":
+            raise AssertionError
+
+        def tokenize(self, text, add_bos):
+            captured["add_bos"] = add_bos
+            return [1, 2, 3]
+
+        def detokenize(self, tokens):
+            captured["tokens"] = tokens
+            return b"hello"
+
+        def embed(self, text):
+            captured["text"] = text
+            return [0.1, 0.2]
+
+    monkeypatch.setitem(sys.modules, "llama_cpp", SimpleNamespace(Llama=FakeLlama))
+    embedder = LlamaCppEmbedder(
+        _cfg(Provider.LLAMA, repo_id="ggml-org/embeddinggemma-300M-GGUF", filename="*Q8_0.gguf"),
+        model_root=tmp_path,
+    )
+
+    assert embedder.embed("hello") == [0.1, 0.2]
+    assert captured["model_path"] == str(model_path)
+    assert captured["embedding"] is True

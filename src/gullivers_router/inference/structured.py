@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING
 
 from gullivers_router.inference.base import StructuredChatModel
@@ -23,6 +24,17 @@ def complete_structured(
     if isinstance(model, StructuredChatModel):
         return model.complete_structured(messages, response_model)
     return response_model.model_validate_json(model.complete(messages))
+
+
+def strip_thinking_sections(content: str) -> str:
+    """Remove common visible reasoning wrappers from model output."""
+    stripped = re.sub(r"<\|channel\>\s*thought\s*.*?<channel\|>", "", content, flags=re.DOTALL | re.IGNORECASE)
+    stripped = re.sub(r"^.*?<channel\|>", "", stripped, count=1, flags=re.DOTALL | re.IGNORECASE)
+    stripped = re.sub(r"<\|channel\>\s*thought\s*.*$", "", stripped, count=1, flags=re.DOTALL | re.IGNORECASE)
+    stripped = re.sub(r"<think\b[^>]*>.*?</think>", "", stripped, flags=re.DOTALL | re.IGNORECASE)
+    stripped = re.sub(r"^.*?</think>", "", stripped, count=1, flags=re.DOTALL | re.IGNORECASE)
+    stripped = re.sub(r"<think\b[^>]*>.*$", "", stripped, count=1, flags=re.DOTALL | re.IGNORECASE)
+    return stripped.strip()
 
 
 def openai_json_schema_response_format(response_model: type[BaseModel]) -> dict:

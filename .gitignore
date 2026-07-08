@@ -43,6 +43,8 @@ artifacts/
 outputs/
 tmp/
 *.log
+/models/*
+!/models/.gitkeep
 
 # Claude
 .claude/

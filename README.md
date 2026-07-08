@@ -23,6 +23,10 @@ filename configured per role in `.env` (see `.env.example`). Each role — local
 embeddings, runtime cloud, and the training judge — can point at any supported provider
 (`llama`, `openai`, or `fireworks`).
 
+Local development defaults use the Vulkan llama.cpp wheel and GPU offload. The submission
+Docker image overrides llama.cpp to CPU mode with `LOCAL_N_GPU_LAYERS=0`,
+`LOCAL_N_THREADS=2`, and `LOCAL_N_CTX=2048`.
+
 ## Usage
 
 | Command                        | Description                                       |
@@ -48,6 +52,34 @@ uv run gullivers-router run \
   --router-weights artifacts/training/router.npz \
   --classify-only
 ```
+
+## Docker submission smoke test
+
+The Dockerfile builds a CPU-only `linux/amd64` image and includes the local Gemma E2B text
+GGUF, the embedding GGUF used by the router, and `artifacts/training/router.npz`.
+
+```sh
+docker buildx build --platform linux/amd64 --load -t gullivers-router:local .
+mkdir -p outputs
+uv run python -c "import numpy as np; np.savez('outputs/router-all-local.npz', weights=np.zeros(768, dtype=np.float64), bias=np.float64(0), alpha=np.float64(2), normalize=True)"
+docker run --rm --memory=4g --cpus=2 \
+  -e CLOUD_PROVIDER=llama \
+  -e CLOUD_REPO_ID=google/gemma-4-E2B-it-qat-q4_0-gguf \
+  -e CLOUD_FILENAME=gemma-4-E2B_q4_0-it.gguf \
+  -e CLOUD_N_CTX=2048 \
+  -e CLOUD_N_GPU_LAYERS=0 \
+  -e CLOUD_N_THREADS=2 \
+  -e CLOUD_MODEL_ROOT=/app/models \
+  -v "$PWD/examples/practice_tasks.json:/input/tasks.json:ro" \
+  -v "$PWD/outputs:/output" \
+  --entrypoint gullivers-router \
+  gullivers-router:local run \
+  --input /input/tasks.json \
+  --output /output/results.json \
+  --router-weights /output/router-all-local.npz
+```
+
+This all-local smoke test writes `outputs/results.json` without requiring Fireworks credentials.
 
 ## Development
 

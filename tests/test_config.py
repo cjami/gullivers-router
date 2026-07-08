@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 from gullivers_router.config import Settings
@@ -64,6 +66,50 @@ def test_role_timeout_seconds_can_be_configured():
     settings = Settings.from_env({"CLOUD_TIMEOUT_SECONDS": "45.5"})
 
     assert settings.cloud.timeout_seconds == 45.5
+
+
+def test_llama_runtime_options_can_be_configured():
+    settings = Settings.from_env(
+        {
+            "LOCAL_N_CTX": "2048",
+            "LOCAL_N_GPU_LAYERS": "0",
+            "LOCAL_FLASH_ATTN": "false",
+            "LOCAL_ENABLE_THINKING": "false",
+            "LOCAL_TEMPERATURE": "0.7",
+            "LOCAL_TOP_P": "0.8",
+            "LOCAL_TOP_K": "32",
+            "LOCAL_N_THREADS": "2",
+            "LOCAL_MODEL_ROOT": "/app/models",
+        }
+    )
+
+    assert settings.local.n_ctx == 2048
+    assert settings.local.n_gpu_layers == 0
+    assert settings.local.flash_attn is False
+    assert settings.local.enable_thinking is False
+    assert settings.local.temperature == 0.7
+    assert settings.local.top_p == 0.8
+    assert settings.local.top_k == 32
+    assert settings.local.n_threads == 2
+    assert settings.local.model_root == Path("/app/models")
+
+
+def test_llama_runtime_defaults_keep_training_profile():
+    settings = Settings.from_env({})
+
+    assert settings.local.n_ctx == 2048
+    assert settings.local.n_gpu_layers == -1
+    assert settings.local.flash_attn is True
+    assert settings.local.enable_thinking is True
+    assert settings.local.temperature == 1.0
+    assert settings.local.top_p == 0.95
+    assert settings.local.top_k == 64
+    assert settings.local.model_root == Path("models")
+
+
+def test_invalid_bool_runtime_option_raises():
+    with pytest.raises(ValueError, match="invalid boolean"):
+        Settings.from_env({"LOCAL_FLASH_ATTN": "maybe"})
 
 
 def test_missing_key_raises_only_when_role_is_built():
