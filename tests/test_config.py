@@ -56,10 +56,36 @@ def test_fireworks_base_url_does_not_override_non_fireworks_roles():
     assert settings.cloud.base_url == "https://openai.example/v1"
 
 
-def test_allowed_models_is_ignored_for_now():
-    settings = Settings.from_env({"ALLOWED_MODELS": "allowed-a,allowed-b", "CLOUD_MODEL": "configured-model"})
+def test_allowed_models_selects_cloud_model_by_preference():
+    settings = Settings.from_env({"ALLOWED_MODELS": "gemma-4-31b-it,minimax-m3,kimi-k2p7-code"})
 
-    assert settings.cloud.model == "configured-model"
+    assert settings.cloud.model == "minimax-m3"
+
+
+def test_allowed_models_overrides_configured_cloud_model():
+    settings = Settings.from_env({"ALLOWED_MODELS": "minimax-m3", "CLOUD_MODEL": "configured-model"})
+
+    assert settings.cloud.model == "minimax-m3"
+
+
+def test_allowed_models_falls_back_to_first_when_no_family_matches():
+    settings = Settings.from_env({"ALLOWED_MODELS": "mystery-a,mystery-b"})
+
+    assert settings.cloud.model == "mystery-a"
+
+
+def test_allowed_models_does_not_override_non_fireworks_cloud():
+    settings = Settings.from_env(
+        {"ALLOWED_MODELS": "minimax-m3", "CLOUD_PROVIDER": "openai", "CLOUD_MODEL": "custom", "CLOUD_API_KEY": "k"}
+    )
+
+    assert settings.cloud.model == "custom"
+
+
+def test_allowed_models_does_not_change_the_training_judge():
+    settings = Settings.from_env({"ALLOWED_MODELS": "minimax-m3"})
+
+    assert settings.judge.model == "accounts/fireworks/models/glm-5p2"
 
 
 def test_role_timeout_seconds_can_be_configured():

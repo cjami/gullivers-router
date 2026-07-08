@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 from dotenv import load_dotenv
 
 from gullivers_router.inference.base import Provider
+from gullivers_router.model_selection import select_model
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -102,9 +103,10 @@ def _role_config(env: Mapping[str, str], role: str) -> ModelConfig:
     base_url = value("BASE_URL", defaults.base_url)
     if provider == Provider.FIREWORKS and env.get("FIREWORKS_BASE_URL"):
         base_url = env["FIREWORKS_BASE_URL"]
+    model = _resolve_model(env, role, provider, value("MODEL", defaults.model))
     return ModelConfig(
         provider=provider,
-        model=value("MODEL", defaults.model),
+        model=model,
         api_key=env.get(f"{role}_API_KEY") or env.get("FIREWORKS_API_KEY"),
         base_url=base_url,
         repo_id=value("REPO_ID", defaults.repo_id),
@@ -120,6 +122,21 @@ def _role_config(env: Mapping[str, str], role: str) -> ModelConfig:
         n_threads=_optional_int(value("N_THREADS", _string(defaults.n_threads))),
         model_root=_optional_path(value("MODEL_ROOT", _string(defaults.model_root))),
     )
+
+
+def _resolve_model(env: Mapping[str, str], role: str, provider: Provider, configured: str | None) -> str | None:
+    """Override the cloud model from ``ALLOWED_MODELS`` when the harness pins the allowlist."""
+    if role != "CLOUD" or provider != Provider.FIREWORKS:
+        return configured
+    allowed = _allowed_models(env)
+    return select_model(allowed) if allowed else configured
+
+
+def _allowed_models(env: Mapping[str, str]) -> list[str]:
+    raw = env.get("ALLOWED_MODELS")
+    if not raw:
+        return []
+    return [item.strip() for item in raw.split(",") if item.strip()]
 
 
 def _optional_float(raw: str | None) -> float | None:
