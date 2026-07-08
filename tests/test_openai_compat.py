@@ -14,16 +14,20 @@ def _response(content, usage=None):
 class FakeCompletions:
     def __init__(self, responses):
         self._responses = list(responses)
+        self.calls = []
 
-    def create(self, **_kwargs):
+    def create(self, **kwargs):
+        self.calls.append(kwargs)
         return self._responses.pop(0)
 
 
-def _chat_with_responses(monkeypatch, responses):
-    chat = OpenAICompatChat(ModelConfig(provider=Provider.FIREWORKS, model="m", api_key="k", base_url="u"))
-    client = SimpleNamespace(chat=SimpleNamespace(completions=FakeCompletions(responses)))
+def _chat_with_responses(monkeypatch, responses, **config_overrides):
+    config = ModelConfig(provider=Provider.FIREWORKS, model="m", api_key="k", base_url="u", **config_overrides)
+    chat = OpenAICompatChat(config)
+    completions = FakeCompletions(responses)
+    client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
     monkeypatch.setattr(chat, "_get_client", lambda: client)
-    return chat
+    return chat, completions
 
 
 def test_system_and_user_message_orders_system_before_user():
@@ -35,7 +39,7 @@ def test_system_and_user_message_orders_system_before_user():
 
 
 def test_complete_accumulates_usage_across_calls(monkeypatch):
-    chat = _chat_with_responses(
+    chat, _ = _chat_with_responses(
         monkeypatch,
         [
             _response("first", SimpleNamespace(prompt_tokens=10, completion_tokens=4)),
@@ -52,8 +56,24 @@ def test_complete_accumulates_usage_across_calls(monkeypatch):
 
 
 def test_complete_tolerates_missing_usage(monkeypatch):
-    chat = _chat_with_responses(monkeypatch, [_response("answer", usage=None)])
+    chat, _ = _chat_with_responses(monkeypatch, [_response("answer", usage=None)])
 
     chat.complete(system_and_user_message("s", "a"))
 
     assert chat.usage.total_tokens == 0
+
+
+def test_disabled_thinking_sends_reasoning_effort_none(monkeypatch):
+    chat, completions = _chat_with_responses(monkeypatch, [_response("answer")], enable_thinking=False)
+
+    chat.complete(system_and_user_message("s", "a"))
+
+    assert completions.calls[0]["extra_body"] == {"reasoning_effort": "none"}
+
+
+def test_unset_thinking_leaves_reasoning_untouched(monkeypatch):
+    chat, completions = _chat_with_responses(monkeypatch, [_response("answer")])
+
+    chat.complete(system_and_user_message("s", "a"))
+
+    assert completions.calls[0]["extra_body"] == {}

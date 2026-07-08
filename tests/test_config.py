@@ -136,6 +136,13 @@ def test_llama_runtime_defaults_keep_training_profile():
     assert settings.local.model_root == Path("models")
 
 
+def test_judge_disables_reasoning_but_cloud_leaves_it_unset():
+    settings = Settings.from_env({})
+
+    assert settings.judge.enable_thinking is False
+    assert settings.cloud.enable_thinking is None
+
+
 def test_invalid_bool_runtime_option_raises():
     with pytest.raises(ValueError, match="invalid boolean"):
         Settings.from_env({"LOCAL_FLASH_ATTN": "maybe"})

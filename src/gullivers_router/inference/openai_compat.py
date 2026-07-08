@@ -24,6 +24,7 @@ class OpenAICompatChat:
             msg = f"provider {config.provider} requires an API key"
             raise ValueError(msg)
         self._config = config
+        self._extra_body = _reasoning_extra_body(config)
         self._client = None
         self._usage_lock = Lock()
         self._prompt_tokens = 0
@@ -62,6 +63,7 @@ class OpenAICompatChat:
             model=self._config.model,
             messages=[m.as_dict() for m in messages],
             seed=DEFAULT_INFERENCE_SEED,
+            extra_body=self._extra_body,
         )
         self._record_usage(response)
         return _completion_content(response)
@@ -77,10 +79,21 @@ class OpenAICompatChat:
             messages=[m.as_dict() for m in messages],
             seed=DEFAULT_INFERENCE_SEED,
             response_format=openai_json_schema_response_format(response_model),
+            extra_body=self._extra_body,
         )
         self._record_usage(response)
         content = _completion_content(response)
         return response_model.model_validate_json(content)
+
+
+def _reasoning_extra_body(config: ModelConfig) -> dict:
+    """Disable thinking on hybrid reasoning models; Fireworks reads ``reasoning_effort='none'``.
+
+    Only applied when a role explicitly opts out, leaving reasoning-required models untouched.
+    """
+    if config.enable_thinking is False:
+        return {"reasoning_effort": "none"}
+    return {}
 
 
 def _completion_content(response) -> str:  # noqa: ANN001 - OpenAI-compatible clients return provider objects.
