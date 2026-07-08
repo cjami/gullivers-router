@@ -252,7 +252,7 @@ def _run_two_tasks(tmp_path, chats, *, output_name="results.json"):
     )
 
 
-def test_cloud_call_prepends_concise_system_prompt(tmp_path):
+def test_local_and_cloud_calls_prepend_concise_system_prompt(tmp_path):
     chats = {
         Provider.LLAMA: FakeChat("local"),
         Provider.FIREWORKS: FakeChat("cloud"),
@@ -267,7 +267,10 @@ def test_cloud_call_prepends_concise_system_prompt(tmp_path):
     assert cloud_messages[-1].content == "cloud hard reasoning"
 
     local_messages = chats[Provider.LLAMA].calls[0]
-    assert [message.role for message in local_messages] == [Role.USER]
+    assert local_messages[0].role == Role.SYSTEM
+    assert local_messages[0].content == cloud_messages[0].content
+    assert local_messages[-1].role == Role.USER
+    assert local_messages[-1].content == "local factual question"
 
 
 def test_cloud_token_usage_is_logged(tmp_path, capsys):

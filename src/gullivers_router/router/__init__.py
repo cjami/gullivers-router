@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from gullivers_router.config import Settings
-from gullivers_router.inference.base import Closeable, UsageReporting, system_and_user_message, user_message
+from gullivers_router.inference.base import Closeable, UsageReporting, system_and_user_message
 from gullivers_router.inference.factory import build_chat_model, build_embedding_model
 from gullivers_router.router.model import category_thresholds, load_numpy, predict_categories, probabilities
 from gullivers_router.training.generate import DEFAULT_CONCURRENCY, complete_with_retry
@@ -31,7 +31,7 @@ DEFAULT_ROUTER_WEIGHTS = Path("artifacts/training/router.npz")
 LOCAL_ROUTE = "local"
 CLOUD_ROUTE = "cloud"
 
-_CLOUD_SYSTEM_PROMPT = (
+_CONCISE_SYSTEM_PROMPT = (
     "Answer accurately and concisely. Give the shortest complete answer; skip preamble, restated questions, and filler."
 )
 
@@ -261,13 +261,15 @@ def answer_tasks(
     with futures.ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
         cloud_futures = {
             pool.submit(
-                complete_with_retry, cloud, system_and_user_message(_CLOUD_SYSTEM_PROMPT, decision.task.prompt)
+                complete_with_retry, cloud, system_and_user_message(_CONCISE_SYSTEM_PROMPT, decision.task.prompt)
             ): decision.task.task_id
             for decision in cloud_decisions
         }
         for index, decision in enumerate(local_decisions, start=1):
             _log(f"[local {index}/{len(local_decisions)}] {decision.task.task_id}")
-            answers[decision.task.task_id] = local.complete(user_message(decision.task.prompt))
+            answers[decision.task.task_id] = local.complete(
+                system_and_user_message(_CONCISE_SYSTEM_PROMPT, decision.task.prompt)
+            )
         for completed, future in enumerate(futures.as_completed(cloud_futures), start=1):
             task_id = cloud_futures[future]
             answers[task_id] = future.result()
