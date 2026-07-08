@@ -78,9 +78,11 @@ def test_train_router_dispatches_quality_floor_options(monkeypatch):
                 "--seed",
                 "7",
                 "--quality-floor",
-                "4.0",
-                "--target-pass-rate",
-                "0.97",
+                "3.0",
+                "--accuracy-gate",
+                "0.80",
+                "--margin",
+                "0.05",
             ]
         )
         == 0
@@ -88,7 +90,13 @@ def test_train_router_dispatches_quality_floor_options(monkeypatch):
 
     [(args, kwargs)] = calls
     assert str(args[0]) == "artifacts\\x"
-    assert kwargs == {"val_fraction": 0.25, "seed": 7, "quality_floor": 4.0, "target_pass_rate": 0.97}
+    assert kwargs == {
+        "val_fraction": 0.25,
+        "seed": 7,
+        "quality_floor": 3.0,
+        "accuracy_gate": 0.80,
+        "target_margin": 0.05,
+    }
 
 
 def test_train_router_default_seed_matches_global_seed(monkeypatch):

@@ -157,6 +157,39 @@ def test_classify_tasks_routes_from_exported_weights(tmp_path):
     )
 
     assert [decision.route for decision in decisions] == [LOCAL_ROUTE, CLOUD_ROUTE]
+    assert [decision.category for decision in decisions] == [None, None]
+
+
+def _category_weights(path):
+    np.savez(
+        path,
+        weights=np.array([1.0]),
+        bias=np.float64(0.0),
+        alpha=np.float64(0.5),
+        normalize=True,
+        cat_weights=np.array([[-1.0], [1.0]]),
+        cat_bias=np.array([0.0, 0.0]),
+        cat_classes=np.array(["easy", "hard"]),
+        cat_alpha=np.array([0.9, 0.1]),
+    )
+
+
+def test_classify_tasks_applies_per_category_thresholds(tmp_path):
+    weights_path = tmp_path / "router.npz"
+    _category_weights(weights_path)
+    weights = dict(np.load(weights_path))
+
+    decisions = classify_tasks(
+        [Task(task_id="l", prompt="local task"), Task(task_id="c", prompt="cloud task")],
+        FakeEmbedder(),
+        weights,
+        local_model="local-model",
+        cloud_model="cloud-model",
+    )
+
+    assert [decision.category for decision in decisions] == ["easy", "hard"]
+    assert [decision.threshold for decision in decisions] == [0.9, 0.1]
+    assert [decision.route for decision in decisions] == [LOCAL_ROUTE, CLOUD_ROUTE]
 
 
 def test_cloud_answers_preserve_input_order(tmp_path):

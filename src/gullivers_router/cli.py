@@ -111,13 +111,19 @@ def _add_train_router_parser(subparsers: argparse._SubParsersAction) -> None:
         "--quality-floor",
         type=float,
         default=training.DEFAULT_QUALITY_FLOOR,
-        help="Minimum acceptable routed answer quality; 4.0 corresponds to 'good'.",
+        help="Minimum acceptable routed answer quality; 3.0 corresponds to 'adequate'.",
     )
     router_parser.add_argument(
-        "--target-pass-rate",
+        "--accuracy-gate",
         type=float,
-        default=training.DEFAULT_TARGET_PASS_RATE,
-        help="Required fraction of routed validation answers meeting the quality floor.",
+        default=training.DEFAULT_ACCURACY_GATE,
+        help="Portfolio accuracy floor the blended pass rate must clear (e.g. 0.80).",
+    )
+    router_parser.add_argument(
+        "--margin",
+        type=float,
+        default=training.DEFAULT_TARGET_MARGIN,
+        help="Safety buffer added to the gate when picking thresholds, against calibration drift.",
     )
 
 
@@ -146,7 +152,8 @@ def main(argv: list[str] | None = None) -> int:
             val_fraction=args.val_fraction,
             seed=args.seed,
             quality_floor=args.quality_floor,
-            target_pass_rate=args.target_pass_rate,
+            accuracy_gate=args.accuracy_gate,
+            target_margin=args.margin,
         )
     else:
         parser.print_help()

@@ -14,7 +14,7 @@ import numpy as np
 from gullivers_router.config import Settings
 from gullivers_router.inference.base import UsageReporting, system_and_user_message, user_message
 from gullivers_router.inference.factory import build_chat_model, build_embedding_model
-from gullivers_router.router.model import load_numpy, probabilities
+from gullivers_router.router.model import category_thresholds, load_numpy, predict_categories, probabilities
 from gullivers_router.training.generate import DEFAULT_CONCURRENCY, complete_with_retry
 
 if TYPE_CHECKING:
@@ -62,6 +62,7 @@ class _Decision:
     risk: float
     threshold: float
     model: str
+    category: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -185,25 +186,38 @@ def classify_tasks(
     _log(f"embedding {len(tasks)} prompts")
     embeddings = np.asarray([embedder.embed(task.prompt) for task in tasks], dtype=np.float64)
     risks = probabilities(weights, embeddings)
-    threshold = float(weights["alpha"])
-    _log(f"classifying against threshold={threshold:.3f} (route to cloud when risk >= threshold)")
+    categories, thresholds = _thresholds(weights, embeddings, len(tasks))
+    _log("classifying with per-category thresholds (route to cloud when risk >= threshold)")
     decisions: list[_Decision] = []
-    for task, risk in zip(tasks, risks, strict=True):
+    for task, risk, threshold, category in zip(tasks, risks, thresholds, categories, strict=True):
         route = CLOUD_ROUTE if risk >= threshold else LOCAL_ROUTE
         model = cloud_model if route == CLOUD_ROUTE else local_model
-        _log(f"[classify] {task.task_id}: risk={float(risk):.3f} -> {route} ({model})")
+        _log(f"[classify] {task.task_id}: risk={float(risk):.3f} thr={threshold:.3f} {category} -> {route} ({model})")
         decisions.append(
             _Decision(
                 task=task,
                 route=route,
                 risk=float(risk),
-                threshold=threshold,
+                threshold=float(threshold),
                 model=model,
+                category=category,
             )
         )
     local_count = sum(1 for decision in decisions if decision.route == LOCAL_ROUTE)
     _log(f"[classify] routed {local_count} -> local, {len(decisions) - local_count} -> cloud")
     return decisions
+
+
+def _thresholds(
+    weights: dict[str, np.ndarray],
+    embeddings: np.ndarray,
+    count: int,
+) -> tuple[list[str | None], np.ndarray]:
+    """Per-task decision thresholds, using the category head when the bundle carries one."""
+    predicted = predict_categories(weights, embeddings)
+    if predicted is None:
+        return [None] * count, np.full(count, float(weights["alpha"]))
+    return [str(category) for category in predicted], category_thresholds(weights, predicted)
 
 
 def classification_record(decision: _Decision) -> dict[str, object]:
@@ -213,6 +227,7 @@ def classification_record(decision: _Decision) -> dict[str, object]:
         "route": decision.route,
         "risk": decision.risk,
         "threshold": decision.threshold,
+        "category": decision.category,
         "model": decision.model,
     }
 

@@ -1,9 +1,17 @@
 import numpy as np
+import pytest
 
 from gullivers_router.router.model import RouterModel
 from gullivers_router.training import store
 from gullivers_router.training.pipeline import Artifacts
-from gullivers_router.training.router import _floor_distance_sample_weights, _load_dataset, _needs_cloud, train_router
+from gullivers_router.training.router import (
+    _Dataset,
+    _floor_distance_sample_weights,
+    _load_dataset,
+    _needs_cloud,
+    _per_category_alpha,
+    train_router,
+)
 
 
 def test_needs_cloud_only_when_local_fails_and_cloud_passes():
@@ -35,7 +43,7 @@ def _write_dataset(root, n_per_category=30):
             prompt_id = f"{category}-{i}"
             centre = 1.0 if cloud_wins else -1.0
             store.append(artifacts.embeddings, {"id": prompt_id, "embedding": (rng.normal(centre, 0.3, 4)).tolist()})
-            local_score, cloud_score = (3, 5) if cloud_wins else (5, 5)
+            local_score, cloud_score = (2, 5) if cloud_wins else (5, 5)
             store.append(
                 artifacts.labels,
                 {
@@ -59,10 +67,15 @@ def test_train_router_writes_artifacts_and_metrics(tmp_path):
     assert metrics["selected_regularization"] in {0.01, 0.1, 1.0, 10.0, 100.0}
     assert metrics["n_train"] + metrics["n_calibration"] + metrics["n_test"] == metrics["n_total"]
     assert metrics["n_val"] == metrics["n_calibration"] + metrics["n_test"]
-    assert metrics["quality_floor"] == 4.0
-    assert metrics["target_pass_rate"] == 0.98
+    assert metrics["quality_floor"] == 3.0
+    assert metrics["accuracy_gate"] == 0.80
+    assert metrics["target_margin"] == 0.03
+    assert metrics["target_pass_rate"] == pytest.approx(0.83)
     assert metrics["selected_alpha_source"] == "calibration"
-    assert metrics["operating_point"]["alpha"] == metrics["calibration_operating_point"]["alpha"]
+    assert metrics["global_operating_point"]["alpha"] == metrics["calibration_operating_point"]["alpha"]
+    assert metrics["operating_point"]["policy"] == "per_category"
+    assert set(metrics["per_category_alpha"]) == {"math", "chat"}
+    assert isinstance(metrics["test_clears_gate"], bool)
     assert "oracle_ceiling" in metrics
     assert "max_achievable_pass_rate" in metrics["oracle_ceiling"]
     assert "sample_weight" in metrics
@@ -75,6 +88,48 @@ def test_train_router_separates_easy_categories(tmp_path):
 
     rates = metrics["per_category_cloud_rate"]
     assert rates["math"] > rates["chat"]
+
+
+def _dataset(categories, local_scores, cloud_scores):
+    count = len(categories)
+    return _Dataset(
+        embeddings=np.zeros((count, 4)),
+        needs_cloud=np.zeros(count, int),
+        local_scores=np.array(local_scores, float),
+        cloud_scores=np.array(cloud_scores, float),
+        sample_weights=np.ones(count),
+        categories=list(categories),
+    )
+
+
+def test_per_category_alpha_keeps_reliable_category_local():
+    size = 30
+    data = _dataset(["easy"] * size + ["hard"] * size, [5.0] * size + [2.0] * size, [5.0] * (2 * size))
+    risk = np.array([0.1] * size + [0.9] * size)
+
+    alphas = _per_category_alpha(risk, data, quality_floor=3.0, target_pass_rate=0.83, global_alpha=0.5)
+
+    assert alphas["easy"] > alphas["hard"]
+
+
+def test_per_category_alpha_falls_back_when_too_few_rows():
+    data = _dataset(["rare"] * 5, [2.0] * 5, [5.0] * 5)
+    risk = np.full(5, 0.9)
+
+    alphas = _per_category_alpha(risk, data, quality_floor=3.0, target_pass_rate=0.83, global_alpha=0.42)
+
+    assert alphas == {"rare": 0.42}
+
+
+def test_train_router_exports_category_head(tmp_path):
+    artifacts = _write_dataset(tmp_path)
+    train_router(tmp_path, val_fraction=0.25, seed=0)
+
+    weights = dict(np.load(artifacts.router_weights))
+
+    assert set(weights["cat_classes"]) == {"math", "chat"}
+    assert weights["cat_alpha"].shape == weights["cat_classes"].shape
+    assert weights["cat_weights"].shape[0] == len(weights["cat_classes"])
 
 
 def test_exported_weights_are_loadable(tmp_path):

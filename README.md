@@ -31,8 +31,9 @@ Docker image overrides llama.cpp to CPU mode with `LOCAL_N_GPU_LAYERS=0`,
 
 | Command                        | Description                                       |
 | ------------------------------ | ------------------------------------------------- |
-| `uv run gullivers-router run`  | Run the batch router (local vs cloud).            |
-| `uv run gullivers-router train`| Train the matrix-factorization router (offline).  |
+| `uv run gullivers-router run`          | Run the batch router (local vs cloud).                    |
+| `uv run gullivers-router train`        | Build the router training dataset (offline).              |
+| `uv run gullivers-router train-router` | Train the routing model from judge scores and embeddings. |
 
 The runtime defaults to the hackathon file contract:
 

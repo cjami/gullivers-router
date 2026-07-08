@@ -2,8 +2,13 @@
 
 Reads the judged prompts and their embeddings, fits a classifier that predicts when the local
 model is likely to miss the quality floor while cloud can rescue the answer, then chooses the
-cheapest threshold that satisfies the target pass rate on a calibration split and reports it on
-a held-out test split.
+cheapest per-category threshold that satisfies the target pass rate on a calibration split and
+reports it on a held-out test split.
+
+The submission gate is a *portfolio* accuracy floor: only the blended pass rate must clear the
+gate, so the target pass rate is the gate plus a safety margin, and thresholds are chosen per
+category to spend cloud calls where local is weakest. A companion category model lets the runtime
+recover each prompt's category from its embedding alone.
 """
 
 from __future__ import annotations
@@ -14,7 +19,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from gullivers_router.inference.base import DEFAULT_INFERENCE_SEED
-from gullivers_router.router.model import RouterModel
+from gullivers_router.router.model import CategoryModel, RouterModel, save_bundle
 from gullivers_router.training import evaluate, store
 from gullivers_router.training.pipeline import Artifacts
 
@@ -23,8 +28,10 @@ if TYPE_CHECKING:
 
 DEFAULT_VAL_FRACTION = 0.2
 DEFAULT_SEED = DEFAULT_INFERENCE_SEED
-DEFAULT_QUALITY_FLOOR = 4.0
-DEFAULT_TARGET_PASS_RATE = 0.98
+DEFAULT_QUALITY_FLOOR = 3.0
+DEFAULT_ACCURACY_GATE = 0.80
+DEFAULT_TARGET_MARGIN = 0.03
+_MIN_CATEGORY_CALIBRATION = 20
 _REGULARIZATION_GRID = (0.01, 0.1, 1.0, 10.0, 100.0)
 _CV_SPLITS = 5
 
@@ -114,6 +121,53 @@ def _choose_alpha(curve: list[evaluate.OperatingPoint], target_pass_rate: float)
     return min(best_points, key=lambda point: point.cloud_fraction)
 
 
+def _per_category_alpha(
+    risk: np.ndarray,
+    data: _Dataset,
+    quality_floor: float,
+    target_pass_rate: float,
+    global_alpha: float,
+) -> dict[str, float]:
+    """Pick each category's cheapest threshold reaching the target, else fall back to global.
+
+    Because every kept category clears the target, their weighted blend clears it too; categories
+    with too few calibration rows to trust default to the global threshold.
+    """
+    categories = np.array(data.categories)
+    alphas: dict[str, float] = {}
+    for category in sorted(set(data.categories)):
+        mask = categories == category
+        if int(np.count_nonzero(mask)) < _MIN_CATEGORY_CALIBRATION:
+            alphas[category] = global_alpha
+            continue
+        curve = evaluate.cost_pass_curve(risk[mask], data.local_scores[mask], data.cloud_scores[mask], quality_floor)
+        point = evaluate.cloud_fraction_for_pass_rate(curve, target_pass_rate)
+        alphas[category] = point.alpha if point is not None else global_alpha
+    return alphas
+
+
+def _fit_category_model(train: _Dataset) -> CategoryModel | None:
+    """Fit the category head, or ``None`` when the data has fewer than two categories."""
+    if len(set(train.categories)) < 2:  # noqa: PLR2004 - two classes required to classify
+        return None
+    return CategoryModel().fit(train.embeddings, np.array(train.categories))
+
+
+def _deployed_routes(
+    risk: np.ndarray,
+    data: _Dataset,
+    category_model: CategoryModel | None,
+    alpha_by_category: dict[str, float],
+    global_alpha: float,
+) -> np.ndarray:
+    """Route with the same predict-category-then-threshold policy the runtime uses."""
+    if category_model is None:
+        return (risk >= global_alpha).astype(int)
+    predicted = category_model.predict(data.embeddings)
+    thresholds = np.array([alpha_by_category.get(str(category), global_alpha) for category in predicted])
+    return (risk >= thresholds).astype(int)
+
+
 def _baselines(data: _Dataset, quality_floor: float) -> dict[str, float]:
     all_local = float(np.mean(data.local_scores))
     all_cloud = float(np.mean(data.cloud_scores))
@@ -134,11 +188,10 @@ def _baselines(data: _Dataset, quality_floor: float) -> dict[str, float]:
     }
 
 
-def _operating_metrics(model: RouterModel, val: _Dataset, alpha: float) -> dict:
+def _operating_metrics(model: RouterModel, val: _Dataset, routes: np.ndarray) -> dict:
     from sklearn.metrics import accuracy_score, precision_recall_fscore_support, roc_auc_score
 
     risk = model.predict_proba(val.embeddings)
-    routes = (risk >= alpha).astype(int)
     precision, recall, f1, _ = precision_recall_fscore_support(
         val.needs_cloud,
         routes,
@@ -156,15 +209,21 @@ def _operating_metrics(model: RouterModel, val: _Dataset, alpha: float) -> dict:
     }
 
 
-def train_router(
+def train_router(  # noqa: PLR0913 - each knob configures a distinct stage of the run
     out: Path,
     *,
     val_fraction: float = DEFAULT_VAL_FRACTION,
     seed: int = DEFAULT_SEED,
     quality_floor: float = DEFAULT_QUALITY_FLOOR,
-    target_pass_rate: float = DEFAULT_TARGET_PASS_RATE,
+    accuracy_gate: float = DEFAULT_ACCURACY_GATE,
+    target_margin: float = DEFAULT_TARGET_MARGIN,
 ) -> dict:
-    """Fit, select, and persist the router; return the metrics report."""
+    """Fit, select, and persist the router; return the metrics report.
+
+    Thresholds target ``accuracy_gate + target_margin`` on the calibration split so the deployed
+    blend clears the gate with headroom against calibration-to-test drift.
+    """
+    target_pass_rate = min(accuracy_gate + target_margin, 1.0)
     artifacts = Artifacts(out)
     data = _load_dataset(artifacts, quality_floor)
     indices = np.arange(len(data))
@@ -180,6 +239,8 @@ def train_router(
         train.needs_cloud,
         train.sample_weights,
     )
+    category_model = _fit_category_model(train)
+
     calibration_risk = model.predict_proba(calibration.embeddings)
     calibration_curve = evaluate.cost_pass_curve(
         calibration_risk,
@@ -188,37 +249,60 @@ def train_router(
         quality_floor,
     )
     calibration_point = _choose_alpha(calibration_curve, target_pass_rate)
+    alpha_by_category = _per_category_alpha(
+        calibration_risk, calibration, quality_floor, target_pass_rate, calibration_point.alpha
+    )
+
     test_risk = model.predict_proba(test.embeddings)
     test_curve = evaluate.cost_pass_curve(test_risk, test.local_scores, test.cloud_scores, quality_floor)
-    operating_point = evaluate.operating_point_at_alpha(
+    global_operating_point = evaluate.operating_point_at_alpha(
         test_risk,
         test.local_scores,
         test.cloud_scores,
         quality_floor,
         calibration_point.alpha,
     )
+    deployed_routes = _deployed_routes(test_risk, test, category_model, alpha_by_category, calibration_point.alpha)
+    deployed_metrics = evaluate.routed_metrics(deployed_routes, test.local_scores, test.cloud_scores, quality_floor)
 
     model.save(artifacts.router_model)
-    model.to_numpy(artifacts.router_weights, alpha=calibration_point.alpha)
+    save_bundle(
+        artifacts.router_weights,
+        risk=model,
+        category=category_model,
+        alpha_by_category=alpha_by_category,
+        global_alpha=calibration_point.alpha,
+    )
 
     metrics = _report(
-        data,
-        train,
-        calibration,
-        test,
-        model,
-        regularization,
-        calibration_curve,
-        test_curve,
-        calibration_point,
-        operating_point,
-        val_fraction,
-        seed,
-        quality_floor,
-        target_pass_rate,
+        _ReportInputs(
+            data=data,
+            train=train,
+            calibration=calibration,
+            test=test,
+            model=model,
+            regularization=regularization,
+            calibration_curve=calibration_curve,
+            test_curve=test_curve,
+            calibration_point=calibration_point,
+            global_operating_point=global_operating_point,
+            deployed_metrics=deployed_metrics,
+            deployed_routes=deployed_routes,
+            alpha_by_category=alpha_by_category,
+            val_fraction=val_fraction,
+            seed=seed,
+            quality_floor=quality_floor,
+            accuracy_gate=accuracy_gate,
+            target_margin=target_margin,
+            target_pass_rate=target_pass_rate,
+        )
     )
     store.write_json(artifacts.router_metrics, metrics)
-    print(f"wrote router -> {artifacts.router_weights} (alpha={operating_point.alpha:.3f})")
+    print(
+        f"wrote router -> {artifacts.router_weights} "
+        f"(global alpha={calibration_point.alpha:.3f}, {len(alpha_by_category)} category thresholds, "
+        f"test pass={deployed_metrics['pass_rate']:.3f} cloud={deployed_metrics['cloud_fraction']:.3f})"
+    )
     return metrics
 
 
@@ -257,78 +341,87 @@ def _stratification_candidates(data: _Dataset) -> tuple[np.ndarray, np.ndarray, 
     return combined, labels, categories
 
 
-def _report(  # noqa: PLR0913 - a report gathers every evaluation input
-    data: _Dataset,
-    train: _Dataset,
-    calibration: _Dataset,
-    test: _Dataset,
-    model: RouterModel,
-    regularization: float,
-    calibration_curve: list[evaluate.OperatingPoint],
-    test_curve: list[evaluate.OperatingPoint],
-    calibration_point: evaluate.OperatingPoint,
-    operating_point: evaluate.OperatingPoint,
-    val_fraction: float,
-    seed: int,
-    quality_floor: float,
-    target_pass_rate: float,
-) -> dict:
+@dataclass(frozen=True, slots=True)
+class _ReportInputs:
+    data: _Dataset
+    train: _Dataset
+    calibration: _Dataset
+    test: _Dataset
+    model: RouterModel
+    regularization: float
+    calibration_curve: list[evaluate.OperatingPoint]
+    test_curve: list[evaluate.OperatingPoint]
+    calibration_point: evaluate.OperatingPoint
+    global_operating_point: evaluate.OperatingPoint
+    deployed_metrics: dict[str, float]
+    deployed_routes: np.ndarray
+    alpha_by_category: dict[str, float]
+    val_fraction: float
+    seed: int
+    quality_floor: float
+    accuracy_gate: float
+    target_margin: float
+    target_pass_rate: float
+
+
+def _operating_point_record(point: evaluate.OperatingPoint) -> dict:
+    return {
+        "alpha": point.alpha,
+        "cloud_fraction": point.cloud_fraction,
+        "quality": point.quality,
+        "pass_rate": point.pass_rate,
+        "violation_rate": point.violation_rate,
+        "rescue_rate": point.rescue_rate,
+        "unnecessary_cloud_fraction": point.unnecessary_cloud_fraction,
+    }
+
+
+def _curve_records(curve: list[evaluate.OperatingPoint]) -> list[dict]:
+    return [
+        {
+            "alpha": point.alpha,
+            "cloud_fraction": point.cloud_fraction,
+            "pass_rate": point.pass_rate,
+            "violation_rate": point.violation_rate,
+        }
+        for point in curve
+    ]
+
+
+def _report(inputs: _ReportInputs) -> dict:
+    data, train, calibration, test = inputs.data, inputs.train, inputs.calibration, inputs.test
+    deployed = inputs.deployed_metrics
+    calibration_gap = inputs.calibration_point.pass_rate - deployed["pass_rate"]
     return {
         "n_total": len(data),
         "n_train": len(train),
         "n_val": len(calibration) + len(test),
         "n_calibration": len(calibration),
         "n_test": len(test),
-        "val_fraction": val_fraction,
+        "val_fraction": inputs.val_fraction,
         "calibration_fraction": len(calibration) / len(data),
         "test_fraction": len(test) / len(data),
-        "seed": seed,
-        "quality_floor": quality_floor,
-        "target_pass_rate": target_pass_rate,
-        "selected_regularization": regularization,
+        "seed": inputs.seed,
+        "quality_floor": inputs.quality_floor,
+        "accuracy_gate": inputs.accuracy_gate,
+        "target_margin": inputs.target_margin,
+        "target_pass_rate": inputs.target_pass_rate,
+        "selected_regularization": inputs.regularization,
         "selected_alpha_source": "calibration",
         "sample_weight": _sample_weight_summary(train.sample_weights),
-        "average_pass_rate": evaluate.average_pass_rate(test_curve),
-        "calibration_average_pass_rate": evaluate.average_pass_rate(calibration_curve),
-        "calibration_operating_point": {
-            "alpha": calibration_point.alpha,
-            "cloud_fraction": calibration_point.cloud_fraction,
-            "quality": calibration_point.quality,
-            "pass_rate": calibration_point.pass_rate,
-            "violation_rate": calibration_point.violation_rate,
-            "rescue_rate": calibration_point.rescue_rate,
-            "unnecessary_cloud_fraction": calibration_point.unnecessary_cloud_fraction,
-        },
-        "operating_point": {
-            "alpha": operating_point.alpha,
-            "cloud_fraction": operating_point.cloud_fraction,
-            "quality": operating_point.quality,
-            "pass_rate": operating_point.pass_rate,
-            "violation_rate": operating_point.violation_rate,
-            "rescue_rate": operating_point.rescue_rate,
-            "unnecessary_cloud_fraction": operating_point.unnecessary_cloud_fraction,
-        },
-        "baselines": _baselines(test, quality_floor),
-        "oracle_ceiling": _oracle_ceiling(test, quality_floor, target_pass_rate),
-        **_operating_metrics(model, test, operating_point.alpha),
-        "cost_pass_curve": [
-            {
-                "alpha": point.alpha,
-                "cloud_fraction": point.cloud_fraction,
-                "pass_rate": point.pass_rate,
-                "violation_rate": point.violation_rate,
-            }
-            for point in test_curve
-        ],
-        "calibration_cost_pass_curve": [
-            {
-                "alpha": point.alpha,
-                "cloud_fraction": point.cloud_fraction,
-                "pass_rate": point.pass_rate,
-                "violation_rate": point.violation_rate,
-            }
-            for point in calibration_curve
-        ],
+        "average_pass_rate": evaluate.average_pass_rate(inputs.test_curve),
+        "calibration_average_pass_rate": evaluate.average_pass_rate(inputs.calibration_curve),
+        "calibration_operating_point": _operating_point_record(inputs.calibration_point),
+        "global_operating_point": _operating_point_record(inputs.global_operating_point),
+        "per_category_alpha": inputs.alpha_by_category,
+        "operating_point": {"policy": "per_category", **deployed},
+        "calibration_to_test_gap": calibration_gap,
+        "test_clears_gate": deployed["pass_rate"] >= inputs.accuracy_gate,
+        "baselines": _baselines(test, inputs.quality_floor),
+        "oracle_ceiling": _oracle_ceiling(test, inputs.quality_floor, inputs.target_pass_rate),
+        **_operating_metrics(inputs.model, test, inputs.deployed_routes),
+        "cost_pass_curve": _curve_records(inputs.test_curve),
+        "calibration_cost_pass_curve": _curve_records(inputs.calibration_curve),
     }
 
 

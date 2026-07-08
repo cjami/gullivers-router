@@ -9,21 +9,27 @@ A low-cost routing system that splits traffic between a free local model and a h
 ```
 src/gullivers_router/
   config.py            Per-role model config (Settings) loaded from .env.
+  model_selection.py   Pick a cloud model from the harness allowlist by family preference.
   inference/           Provider-agnostic clients shared by runtime and training.
     base.py            ChatModel / EmbeddingModel protocols.
     truncation.py      Head-and-tail token truncation for embeddings.
+    structured.py      Shared helpers for provider structured (schema-constrained) completions.
     llama_cpp.py       Local GGUF backends (auto-downloaded from HuggingFace).
     openai_compat.py   Chat over any OpenAI-compatible endpoint (e.g. Fireworks).
     factory.py         Build the backend for a role's configured provider.
-  router/              Runtime path: single-call routing (skeleton).
-  training/            Offline path: select -> generate (local + cloud) -> judge -> label.
+  router/              Runtime path: embed -> risk-score -> per-category threshold -> route -> answer.
+    model.py           Risk + category logistic models and their numpy-only export/scoring.
+  training/            Offline path: select -> generate (local + cloud) -> judge -> label -> embed.
     dataset.py         Balanced prompt sampling from OpenLeecher/lmsys_chat_1m_clean.
     store.py           Append-only JSONL persistence for resumable, id-keyed stages.
     generate.py        Local (sequential) and cloud (concurrent serverless) generation.
     combine.py         Align local + cloud responses into judge-ready pairs by id.
     judge.py           Score pairs with the judge model and parse structured results.
     labels.py          Turn judge scores into 0/1 routing labels.
-    pipeline.py        Orchestrate the resumable select -> generate -> judge -> label run.
+    embed.py           Resumable, cached embedding of the training prompts by id.
+    pipeline.py        Orchestrate the resumable select -> generate -> judge -> label -> embed run.
+    router.py          Fit, calibrate per-category thresholds, evaluate, and export the router.
+    evaluate.py        Quality-floor cost/pass-rate curves and operating-point metrics.
 ```
 
 Roles (`local`, `embedding`, `cloud`, `judge`) are each independently configurable to any

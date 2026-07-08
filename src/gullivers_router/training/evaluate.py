@@ -64,17 +64,29 @@ def operating_point_at_alpha(
 ) -> OperatingPoint:
     """Measure routed quality and cost at a fixed decision threshold."""
     routes = (risk >= alpha).astype(int)
-    quality = routed_quality(routes, local_scores, cloud_scores)
+    return OperatingPoint(alpha=float(alpha), **routed_metrics(routes, local_scores, cloud_scores, quality_floor))
+
+
+def routed_metrics(
+    routes: np.ndarray,
+    local_scores: np.ndarray,
+    cloud_scores: np.ndarray,
+    quality_floor: float,
+) -> dict[str, float]:
+    """Quality, pass rate, and cost for an explicit per-row route vector.
+
+    Unlike :func:`operating_point_at_alpha`, the routes need not come from a single threshold,
+    so this also scores per-category or otherwise heterogeneous routing policies.
+    """
     passes = pass_rate(routes, local_scores, cloud_scores, quality_floor)
-    return OperatingPoint(
-        alpha=float(alpha),
-        cloud_fraction=float(np.mean(routes)),
-        quality=quality,
-        pass_rate=passes,
-        violation_rate=1.0 - passes,
-        rescue_rate=_rescue_rate(routes, local_scores, cloud_scores, quality_floor),
-        unnecessary_cloud_fraction=_unnecessary_cloud_fraction(routes, local_scores, quality_floor),
-    )
+    return {
+        "cloud_fraction": float(np.mean(routes)),
+        "quality": routed_quality(routes, local_scores, cloud_scores),
+        "pass_rate": passes,
+        "violation_rate": 1.0 - passes,
+        "rescue_rate": _rescue_rate(routes, local_scores, cloud_scores, quality_floor),
+        "unnecessary_cloud_fraction": _unnecessary_cloud_fraction(routes, local_scores, quality_floor),
+    }
 
 
 def _rescue_rate(

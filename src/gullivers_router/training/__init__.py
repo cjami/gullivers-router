@@ -1,4 +1,4 @@
-"""Matrix-factorization training pipeline (offline, batch-based)."""
+"""Offline training pipeline: select -> generate -> judge -> label -> embed -> train router."""
 
 from __future__ import annotations
 
@@ -9,17 +9,19 @@ from gullivers_router.training.dataset import SAMPLES_PER_CATEGORY, Category, Pr
 from gullivers_router.training.generate import DEFAULT_CONCURRENCY
 from gullivers_router.training.pipeline import DEFAULT_OUT, STAGES, run_pipeline
 from gullivers_router.training.router import (
+    DEFAULT_ACCURACY_GATE,
     DEFAULT_QUALITY_FLOOR,
     DEFAULT_SEED,
-    DEFAULT_TARGET_PASS_RATE,
+    DEFAULT_TARGET_MARGIN,
     DEFAULT_VAL_FRACTION,
     train_router,
 )
 
 __all__ = [
+    "DEFAULT_ACCURACY_GATE",
     "DEFAULT_QUALITY_FLOOR",
     "DEFAULT_SEED",
-    "DEFAULT_TARGET_PASS_RATE",
+    "DEFAULT_TARGET_MARGIN",
     "DEFAULT_VAL_FRACTION",
     "Category",
     "Prompt",
