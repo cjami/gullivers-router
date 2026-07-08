@@ -1,25 +1,18 @@
 FROM python:3.12-slim AS builder
 
-ENV CMAKE_ARGS="-DGGML_NATIVE=OFF -DCMAKE_BUILD_TYPE=Release" \
-    FORCE_CMAKE=1 \
-    PIP_NO_CACHE_DIR=1
-
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends build-essential cmake ninja-build \
-    && rm -rf /var/lib/apt/lists/*
+ENV PIP_NO_CACHE_DIR=1
 
 WORKDIR /build
 COPY pyproject.toml README.md ./
-
-# Compile llama-cpp-python from source in its own layer so a code change does not
-# invalidate the slow build; it is re-run only when pyproject or the base image changes.
-RUN python -m pip install --upgrade pip \
-    && python -m pip install --prefix=/install llama-cpp-python
-
 COPY src ./src
 
-# Light pure-Python deps and our package; llama-cpp-python is already satisfied.
-RUN python -m pip install --prefix=/install .
+# Install the package in a single pass, pulling llama-cpp-python as a prebuilt CPU wheel
+# from the abetlen index. No source compilation, so the image needs no build toolchain.
+RUN python -m pip install --upgrade pip \
+    && python -m pip install --prefix=/install \
+       --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu \
+       --only-binary=llama-cpp-python \
+       .
 
 FROM python:3.12-slim
 
