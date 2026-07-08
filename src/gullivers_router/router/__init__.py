@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from concurrent import futures
 from dataclasses import dataclass
 from pathlib import Path
@@ -108,22 +109,29 @@ def run(
 def run_with_context(options: RuntimeOptions, context: RuntimeContext) -> None:
     """Run the batch router with explicit dependencies."""
     tasks = load_tasks(options.input_path)
+    _log(f"loaded {len(tasks)} tasks <- {options.input_path}")
+    local_model = _model_name(context.settings.local)
+    cloud_model = _model_name(context.settings.cloud)
+    _log(f"routing with local={local_model} cloud={cloud_model} weights={options.router_weights}")
+
     embedder = context.embedding_factory(context.settings.embedding)
     decisions = classify_tasks(
         tasks,
         embedder,
         load_numpy(options.router_weights),
-        local_model=_model_name(context.settings.local),
-        cloud_model=_model_name(context.settings.cloud),
+        local_model=local_model,
+        cloud_model=cloud_model,
     )
 
     if options.classify_only:
+        _log(f"classify-only: writing {len(decisions)} route diagnostics -> {options.output_path}")
         write_results(options.output_path, [classification_record(decision) for decision in decisions])
         return
 
     local = context.chat_factory(context.settings.local)
     cloud = context.chat_factory(context.settings.cloud)
     answers = answer_tasks(decisions, local, cloud, workers=options.workers)
+    _log(f"writing {len(answers)} answers -> {options.output_path}")
     write_results(options.output_path, [{"task_id": task_id, "answer": answer} for task_id, answer in answers])
 
 
@@ -171,21 +179,27 @@ def classify_tasks(
     if not tasks:
         return []
 
+    _log(f"embedding {len(tasks)} prompts")
     embeddings = np.asarray([embedder.embed(task.prompt) for task in tasks], dtype=np.float64)
     risks = probabilities(weights, embeddings)
     threshold = float(weights["alpha"])
+    _log(f"classifying against threshold={threshold:.3f} (route to cloud when risk >= threshold)")
     decisions: list[_Decision] = []
     for task, risk in zip(tasks, risks, strict=True):
         route = CLOUD_ROUTE if risk >= threshold else LOCAL_ROUTE
+        model = cloud_model if route == CLOUD_ROUTE else local_model
+        _log(f"[classify] {task.task_id}: risk={float(risk):.3f} -> {route} ({model})")
         decisions.append(
             _Decision(
                 task=task,
                 route=route,
                 risk=float(risk),
                 threshold=threshold,
-                model=cloud_model if route == CLOUD_ROUTE else local_model,
+                model=model,
             )
         )
+    local_count = sum(1 for decision in decisions if decision.route == LOCAL_ROUTE)
+    _log(f"[classify] routed {local_count} -> local, {len(decisions) - local_count} -> cloud")
     return decisions
 
 
@@ -208,12 +222,15 @@ def answer_tasks(
     workers: int,
 ) -> list[tuple[str, str]]:
     """Generate answers for routed tasks, preserving input order."""
-    answers: dict[str, str] = {}
-    for decision in decisions:
-        if decision.route == LOCAL_ROUTE:
-            answers[decision.task.task_id] = local.complete(user_message(decision.task.prompt))
-
+    local_decisions = [decision for decision in decisions if decision.route == LOCAL_ROUTE]
     cloud_decisions = [decision for decision in decisions if decision.route == CLOUD_ROUTE]
+    _log(f"answering {len(local_decisions)} local (sequential), {len(cloud_decisions)} cloud ({workers} workers)")
+
+    answers: dict[str, str] = {}
+    for index, decision in enumerate(local_decisions, start=1):
+        _log(f"[local {index}/{len(local_decisions)}] {decision.task.task_id}")
+        answers[decision.task.task_id] = local.complete(user_message(decision.task.prompt))
+
     if cloud_decisions:
         answers.update(_answer_cloud(cloud_decisions, cloud, workers=workers))
 
@@ -230,17 +247,23 @@ def _answer_cloud(decisions: Sequence[_Decision], cloud: ChatModel, *, workers: 
     lock = Lock()
     answers: dict[str, str] = {}
     max_workers = max(1, workers)
+    total = len(decisions)
     with futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
         submitted = {
             pool.submit(complete_with_retry, cloud, user_message(decision.task.prompt)): decision.task.task_id
             for decision in decisions
         }
-        for future in futures.as_completed(submitted):
+        for completed, future in enumerate(futures.as_completed(submitted), start=1):
             task_id = submitted[future]
             answer = future.result()
             with lock:
                 answers[task_id] = answer
+            _log(f"[cloud {completed}/{total}] {task_id} done")
     return answers
+
+
+def _log(message: str) -> None:
+    print(f"[router] {message}", file=sys.stderr, flush=True)
 
 
 def _model_name(config: object) -> str:
