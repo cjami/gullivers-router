@@ -60,6 +60,12 @@ def test_allowed_models_is_ignored_for_now():
     assert settings.cloud.model == "configured-model"
 
 
+def test_role_timeout_seconds_can_be_configured():
+    settings = Settings.from_env({"CLOUD_TIMEOUT_SECONDS": "45.5"})
+
+    assert settings.cloud.timeout_seconds == 45.5
+
+
 def test_missing_key_raises_only_when_role_is_built():
     settings = Settings.from_env({"CLOUD_PROVIDER": "openai", "CLOUD_MODEL": "custom"})
     with pytest.raises(ValueError, match="API key"):

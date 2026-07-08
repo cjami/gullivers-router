@@ -54,6 +54,19 @@ def test_openai_compatible_chat_uses_global_seed():
     assert captured["seed"] == DEFAULT_INFERENCE_SEED
 
 
+@pytest.mark.parametrize("content", [None, "   "])
+def test_openai_compatible_chat_rejects_empty_content(content):
+    def create(**_kwargs):
+        message = SimpleNamespace(content=content)
+        return SimpleNamespace(choices=[SimpleNamespace(message=message)])
+
+    chat = OpenAICompatChat(_cfg(Provider.OPENAI, api_key="k", model="m"))
+    chat._client = cast(Any, SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create))))
+
+    with pytest.raises(RuntimeError, match="empty content"):
+        chat.complete([Message(Role.USER, "hello")])
+
+
 def test_openai_compatible_chat_sends_json_schema_response_format():
     captured = {}
 

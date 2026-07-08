@@ -29,7 +29,11 @@ class OpenAICompatChat:
         if self._client is None:
             from openai import OpenAI
 
-            self._client = OpenAI(api_key=self._config.api_key, base_url=self._config.base_url)
+            self._client = OpenAI(
+                api_key=self._config.api_key,
+                base_url=self._config.base_url,
+                timeout=self._config.timeout_seconds,
+            )
         return self._client
 
     def complete(self, messages: Sequence[Message]) -> str:
@@ -39,7 +43,7 @@ class OpenAICompatChat:
             messages=[m.as_dict() for m in messages],
             seed=DEFAULT_INFERENCE_SEED,
         )
-        return response.choices[0].message.content or ""
+        return _completion_content(response)
 
     def complete_structured(
         self,
@@ -53,5 +57,13 @@ class OpenAICompatChat:
             seed=DEFAULT_INFERENCE_SEED,
             response_format=openai_json_schema_response_format(response_model),
         )
-        content = response.choices[0].message.content or ""
+        content = _completion_content(response)
         return response_model.model_validate_json(content)
+
+
+def _completion_content(response) -> str:  # noqa: ANN001 - OpenAI-compatible clients return provider objects.
+    content = response.choices[0].message.content
+    if not content or not content.strip():
+        msg = "chat completion returned empty content"
+        raise RuntimeError(msg)
+    return content

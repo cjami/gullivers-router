@@ -26,6 +26,7 @@ class ModelConfig:
     base_url: str | None = None
     repo_id: str | None = None
     filename: str | None = None
+    timeout_seconds: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,7 +80,12 @@ def _role_config(env: Mapping[str, str], role: str) -> ModelConfig:
         base_url=base_url,
         repo_id=value("REPO_ID", defaults.repo_id),
         filename=value("FILENAME", defaults.filename),
+        timeout_seconds=_optional_float(value("TIMEOUT_SECONDS", None)),
     )
+
+
+def _optional_float(raw: str | None) -> float | None:
+    return float(raw) if raw else None
 
 
 @dataclass(frozen=True, slots=True)
