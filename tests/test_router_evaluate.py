@@ -75,6 +75,18 @@ def test_cost_pass_curve_reports_rescue_and_unnecessary_cloud():
     assert point.unnecessary_cloud_fraction == 0.25
 
 
+def test_operating_point_at_alpha_uses_fixed_threshold():
+    risk = np.array([0.9, 0.6, 0.4, 0.1])
+    local = np.array([3.0, 5.0, 3.0, 5.0])
+    cloud = np.array([5.0, 5.0, 5.0, 5.0])
+
+    point = evaluate.operating_point_at_alpha(risk, local, cloud, quality_floor=4.0, alpha=0.5)
+
+    assert point.alpha == 0.5
+    assert point.cloud_fraction == 0.5
+    assert point.pass_rate == 0.75
+
+
 def test_per_category_cloud_rate():
     routes = np.array([1, 0, 1, 1])
     categories = ["math", "math", "code", "code"]

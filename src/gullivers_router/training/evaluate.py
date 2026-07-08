@@ -52,23 +52,29 @@ def cost_pass_curve(
             ]
         )
     )[::-1]
-    points: list[OperatingPoint] = []
-    for alpha in alphas:
-        routes = (risk >= alpha).astype(int)
-        quality = routed_quality(routes, local_scores, cloud_scores)
-        passes = pass_rate(routes, local_scores, cloud_scores, quality_floor)
-        points.append(
-            OperatingPoint(
-                alpha=float(alpha),
-                cloud_fraction=float(np.mean(routes)),
-                quality=quality,
-                pass_rate=passes,
-                violation_rate=1.0 - passes,
-                rescue_rate=_rescue_rate(routes, local_scores, cloud_scores, quality_floor),
-                unnecessary_cloud_fraction=_unnecessary_cloud_fraction(routes, local_scores, quality_floor),
-            )
-        )
-    return points
+    return [operating_point_at_alpha(risk, local_scores, cloud_scores, quality_floor, float(alpha)) for alpha in alphas]
+
+
+def operating_point_at_alpha(
+    risk: np.ndarray,
+    local_scores: np.ndarray,
+    cloud_scores: np.ndarray,
+    quality_floor: float,
+    alpha: float,
+) -> OperatingPoint:
+    """Measure routed quality and cost at a fixed decision threshold."""
+    routes = (risk >= alpha).astype(int)
+    quality = routed_quality(routes, local_scores, cloud_scores)
+    passes = pass_rate(routes, local_scores, cloud_scores, quality_floor)
+    return OperatingPoint(
+        alpha=float(alpha),
+        cloud_fraction=float(np.mean(routes)),
+        quality=quality,
+        pass_rate=passes,
+        violation_rate=1.0 - passes,
+        rescue_rate=_rescue_rate(routes, local_scores, cloud_scores, quality_floor),
+        unnecessary_cloud_fraction=_unnecessary_cloud_fraction(routes, local_scores, quality_floor),
+    )
 
 
 def _rescue_rate(

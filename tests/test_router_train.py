@@ -3,7 +3,7 @@ import numpy as np
 from gullivers_router.router.model import RouterModel
 from gullivers_router.training import store
 from gullivers_router.training.pipeline import Artifacts
-from gullivers_router.training.router import _load_dataset, _needs_cloud, train_router
+from gullivers_router.training.router import _floor_distance_sample_weights, _load_dataset, _needs_cloud, train_router
 
 
 def test_needs_cloud_only_when_local_fails_and_cloud_passes():
@@ -13,6 +13,17 @@ def test_needs_cloud_only_when_local_fails_and_cloud_passes():
     needs_cloud = _needs_cloud(local_scores, cloud_scores, quality_floor=4.0)
 
     assert needs_cloud.tolist() == [1, 0, 0, 0]
+
+
+def test_floor_distance_sample_weights_downweight_boundary_rows():
+    local_scores = np.array([3.9, 2.0, 4.0])
+    cloud_scores = np.array([4.1, 5.0, 5.0])
+
+    weights = _floor_distance_sample_weights(local_scores, cloud_scores, quality_floor=4.0)
+
+    assert weights[0] < weights[1]
+    assert weights[2] < weights[1]
+    assert np.isclose(np.mean(weights), 1.0)
 
 
 def _write_dataset(root, n_per_category=30):
@@ -46,9 +57,15 @@ def test_train_router_writes_artifacts_and_metrics(tmp_path):
     assert artifacts.router_weights.exists()
     assert store.read_json(artifacts.router_metrics) == metrics
     assert metrics["selected_regularization"] in {0.01, 0.1, 1.0, 10.0, 100.0}
-    assert metrics["n_train"] + metrics["n_val"] == metrics["n_total"]
+    assert metrics["n_train"] + metrics["n_calibration"] + metrics["n_test"] == metrics["n_total"]
+    assert metrics["n_val"] == metrics["n_calibration"] + metrics["n_test"]
     assert metrics["quality_floor"] == 4.0
     assert metrics["target_pass_rate"] == 0.98
+    assert metrics["selected_alpha_source"] == "calibration"
+    assert metrics["operating_point"]["alpha"] == metrics["calibration_operating_point"]["alpha"]
+    assert "oracle_ceiling" in metrics
+    assert "max_achievable_pass_rate" in metrics["oracle_ceiling"]
+    assert "sample_weight" in metrics
 
 
 def test_train_router_separates_easy_categories(tmp_path):

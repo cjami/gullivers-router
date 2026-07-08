@@ -99,7 +99,7 @@ def _add_train_router_parser(subparsers: argparse._SubParsersAction) -> None:
         "--val-fraction",
         type=float,
         default=training.DEFAULT_VAL_FRACTION,
-        help="Fraction of prompts held out for cost-quality evaluation.",
+        help="Fraction of prompts held out and split evenly into calibration and test sets.",
     )
     router_parser.add_argument(
         "--seed",
