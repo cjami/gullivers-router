@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from threading import Lock
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -10,7 +11,7 @@ if TYPE_CHECKING:
     from gullivers_router.config import ModelConfig
     from gullivers_router.inference.base import Message, StructuredOutput
 
-from gullivers_router.inference.base import DEFAULT_INFERENCE_SEED
+from gullivers_router.inference.base import DEFAULT_INFERENCE_SEED, TokenUsage
 from gullivers_router.inference.structured import openai_json_schema_response_format
 
 
@@ -24,6 +25,25 @@ class OpenAICompatChat:
             raise ValueError(msg)
         self._config = config
         self._client = None
+        self._usage_lock = Lock()
+        self._prompt_tokens = 0
+        self._completion_tokens = 0
+
+    @property
+    def usage(self) -> TokenUsage:
+        """Cumulative tokens consumed across every call on this client."""
+        with self._usage_lock:
+            return TokenUsage(self._prompt_tokens, self._completion_tokens)
+
+    def _record_usage(self, response) -> None:  # noqa: ANN001 - provider response object
+        usage = getattr(response, "usage", None)
+        if usage is None:
+            return
+        prompt = getattr(usage, "prompt_tokens", 0) or 0
+        completion = getattr(usage, "completion_tokens", 0) or 0
+        with self._usage_lock:
+            self._prompt_tokens += prompt
+            self._completion_tokens += completion
 
     def _get_client(self):  # noqa: ANN202
         if self._client is None:
@@ -43,6 +63,7 @@ class OpenAICompatChat:
             messages=[m.as_dict() for m in messages],
             seed=DEFAULT_INFERENCE_SEED,
         )
+        self._record_usage(response)
         return _completion_content(response)
 
     def complete_structured(
@@ -57,6 +78,7 @@ class OpenAICompatChat:
             seed=DEFAULT_INFERENCE_SEED,
             response_format=openai_json_schema_response_format(response_model),
         )
+        self._record_usage(response)
         content = _completion_content(response)
         return response_model.model_validate_json(content)
 

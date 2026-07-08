@@ -7,13 +7,12 @@ import sys
 from concurrent import futures
 from dataclasses import dataclass
 from pathlib import Path
-from threading import Lock
 from typing import TYPE_CHECKING
 
 import numpy as np
 
 from gullivers_router.config import Settings
-from gullivers_router.inference.base import user_message
+from gullivers_router.inference.base import UsageReporting, system_and_user_message, user_message
 from gullivers_router.inference.factory import build_chat_model, build_embedding_model
 from gullivers_router.router.model import load_numpy, probabilities
 from gullivers_router.training.generate import DEFAULT_CONCURRENCY, complete_with_retry
@@ -29,6 +28,10 @@ DEFAULT_OUTPUT = Path("/output/results.json")
 DEFAULT_ROUTER_WEIGHTS = Path("artifacts/training/router.npz")
 LOCAL_ROUTE = "local"
 CLOUD_ROUTE = "cloud"
+
+_CLOUD_SYSTEM_PROMPT = (
+    "Answer accurately and concisely. Give the shortest complete answer; skip preamble, restated questions, and filler."
+)
 
 __all__ = [
     "CLOUD_ROUTE",
@@ -221,18 +224,35 @@ def answer_tasks(
     *,
     workers: int,
 ) -> list[tuple[str, str]]:
-    """Generate answers for routed tasks, preserving input order."""
+    """Generate answers for routed tasks, preserving input order.
+
+    Cloud requests are network-bound and dispatched to a thread pool, while the local model is
+    CPU- and memory-bound and runs one prompt at a time in this thread. Both proceed at once, so
+    local inference (and its cold-start load) overlaps the in-flight cloud latency instead of
+    waiting behind it.
+    """
     local_decisions = [decision for decision in decisions if decision.route == LOCAL_ROUTE]
     cloud_decisions = [decision for decision in decisions if decision.route == CLOUD_ROUTE]
     _log(f"answering {len(local_decisions)} local (sequential), {len(cloud_decisions)} cloud ({workers} workers)")
 
     answers: dict[str, str] = {}
-    for index, decision in enumerate(local_decisions, start=1):
-        _log(f"[local {index}/{len(local_decisions)}] {decision.task.task_id}")
-        answers[decision.task.task_id] = local.complete(user_message(decision.task.prompt))
+    with futures.ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+        cloud_futures = {
+            pool.submit(
+                complete_with_retry, cloud, system_and_user_message(_CLOUD_SYSTEM_PROMPT, decision.task.prompt)
+            ): decision.task.task_id
+            for decision in cloud_decisions
+        }
+        for index, decision in enumerate(local_decisions, start=1):
+            _log(f"[local {index}/{len(local_decisions)}] {decision.task.task_id}")
+            answers[decision.task.task_id] = local.complete(user_message(decision.task.prompt))
+        for completed, future in enumerate(futures.as_completed(cloud_futures), start=1):
+            task_id = cloud_futures[future]
+            answers[task_id] = future.result()
+            _log(f"[cloud {completed}/{len(cloud_decisions)}] {task_id} done")
 
     if cloud_decisions:
-        answers.update(_answer_cloud(cloud_decisions, cloud, workers=workers))
+        _log_cloud_usage(cloud)
 
     return [(decision.task.task_id, answers[decision.task.task_id]) for decision in decisions]
 
@@ -243,23 +263,11 @@ def write_results(path: Path, records: Sequence[dict[str, object]]) -> None:
     path.write_text(json.dumps(list(records), ensure_ascii=False), encoding="utf-8")
 
 
-def _answer_cloud(decisions: Sequence[_Decision], cloud: ChatModel, *, workers: int) -> dict[str, str]:
-    lock = Lock()
-    answers: dict[str, str] = {}
-    max_workers = max(1, workers)
-    total = len(decisions)
-    with futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
-        submitted = {
-            pool.submit(complete_with_retry, cloud, user_message(decision.task.prompt)): decision.task.task_id
-            for decision in decisions
-        }
-        for completed, future in enumerate(futures.as_completed(submitted), start=1):
-            task_id = submitted[future]
-            answer = future.result()
-            with lock:
-                answers[task_id] = answer
-            _log(f"[cloud {completed}/{total}] {task_id} done")
-    return answers
+def _log_cloud_usage(cloud: ChatModel) -> None:
+    if not isinstance(cloud, UsageReporting):
+        return
+    usage = cloud.usage
+    _log(f"cloud tokens: prompt={usage.prompt_tokens} completion={usage.completion_tokens} total={usage.total_tokens}")
 
 
 def _log(message: str) -> None:

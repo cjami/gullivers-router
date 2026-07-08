@@ -43,12 +43,35 @@ class Message:
         return {"role": self.role.value, "content": self.content}
 
 
+@dataclass(frozen=True, slots=True)
+class TokenUsage:
+    """Cumulative token counts reported by a provider."""
+
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+
+    @property
+    def total_tokens(self) -> int:
+        """Prompt plus completion tokens."""
+        return self.prompt_tokens + self.completion_tokens
+
+
 @runtime_checkable
 class ChatModel(Protocol):
     """A model that answers one prompt at a time (runtime path)."""
 
     def complete(self, messages: Sequence[Message]) -> str:
         """Return the model's answer to a single prompt."""
+        ...
+
+
+@runtime_checkable
+class UsageReporting(Protocol):
+    """A model that reports cumulative token usage across its calls."""
+
+    @property
+    def usage(self) -> TokenUsage:
+        """Return the tokens consumed so far."""
         ...
 
 
@@ -77,3 +100,8 @@ class EmbeddingModel(Protocol):
 def user_message(text: str) -> list[Message]:
     """Wrap raw prompt text as a single-turn user message list."""
     return [Message(Role.USER, text)]
+
+
+def system_and_user_message(system: str, text: str) -> list[Message]:
+    """Wrap a system instruction followed by the user prompt."""
+    return [Message(Role.SYSTEM, system), Message(Role.USER, text)]

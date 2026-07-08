@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 
 from gullivers_router.config import ModelConfig, Settings
-from gullivers_router.inference.base import Provider
+from gullivers_router.inference.base import Provider, Role, TokenUsage
 from gullivers_router.router import (
     CLOUD_ROUTE,
     LOCAL_ROUTE,
@@ -30,8 +30,8 @@ class FakeChat:
         self.calls = []
 
     def complete(self, messages):
-        prompt = messages[0].content
-        self.calls.append(prompt)
+        self.calls.append(list(messages))
+        prompt = messages[-1].content
         if self.delay and "slow" in prompt:
             time.sleep(0.02)
         return f"{self.prefix}: {prompt}"
@@ -187,6 +187,65 @@ def test_cloud_answers_preserve_input_order(tmp_path):
         {"task_id": "slow", "answer": "cloud: cloud slow task"},
         {"task_id": "fast", "answer": "cloud: cloud fast task"},
     ]
+
+
+class FakeUsageChat(FakeChat):
+    def __init__(self, prefix, usage):
+        super().__init__(prefix)
+        self._usage = usage
+
+    @property
+    def usage(self):
+        return self._usage
+
+
+def _run_two_tasks(tmp_path, chats, *, output_name="results.json"):
+    input_path = tmp_path / "tasks.json"
+    output_path = tmp_path / output_name
+    weights_path = tmp_path / "router.npz"
+    _weights(weights_path)
+    input_path.write_text(
+        json.dumps(
+            [
+                {"task_id": "a", "prompt": "local factual question"},
+                {"task_id": "b", "prompt": "cloud hard reasoning"},
+            ]
+        ),
+        encoding="utf-8",
+    )
+    run_with_context(
+        RuntimeOptions(input_path=input_path, output_path=output_path, router_weights=weights_path),
+        _context(chats=chats),
+    )
+
+
+def test_cloud_call_prepends_concise_system_prompt(tmp_path):
+    chats = {
+        Provider.LLAMA: FakeChat("local"),
+        Provider.FIREWORKS: FakeChat("cloud"),
+    }
+
+    _run_two_tasks(tmp_path, chats)
+
+    cloud_messages = chats[Provider.FIREWORKS].calls[0]
+    assert cloud_messages[0].role == Role.SYSTEM
+    assert cloud_messages[0].content
+    assert cloud_messages[-1].role == Role.USER
+    assert cloud_messages[-1].content == "cloud hard reasoning"
+
+    local_messages = chats[Provider.LLAMA].calls[0]
+    assert [message.role for message in local_messages] == [Role.USER]
+
+
+def test_cloud_token_usage_is_logged(tmp_path, capsys):
+    chats = {
+        Provider.LLAMA: FakeChat("local"),
+        Provider.FIREWORKS: FakeUsageChat("cloud", TokenUsage(prompt_tokens=12, completion_tokens=3)),
+    }
+
+    _run_two_tasks(tmp_path, chats)
+
+    assert "cloud tokens: prompt=12 completion=3 total=15" in capsys.readouterr().err
 
 
 def test_load_tasks_rejects_malformed_input(tmp_path):
