@@ -281,6 +281,44 @@ def test_cloud_token_usage_is_logged(tmp_path, capsys):
     assert "cloud tokens: prompt=12 completion=3 total=15" in capsys.readouterr().err
 
 
+def test_run_releases_embedder_before_building_local_model(tmp_path):
+    events = []
+
+    class ClosingEmbedder:
+        def embed(self, text):
+            return [1.0] if "cloud" in text else [-1.0]
+
+        def close(self):
+            events.append("embedder_closed")
+
+    chats = {Provider.LLAMA: FakeChat("local"), Provider.FIREWORKS: FakeChat("cloud")}
+
+    def chat_factory(config):
+        events.append(f"build_{config.provider.value}")
+        return chats[config.provider]
+
+    context = RuntimeContext(
+        settings=_settings(),
+        embedding_factory=lambda config: ClosingEmbedder(),
+        chat_factory=chat_factory,
+    )
+
+    input_path = tmp_path / "tasks.json"
+    weights_path = tmp_path / "router.npz"
+    _weights(weights_path)
+    input_path.write_text(
+        json.dumps([{"task_id": "a", "prompt": "local q"}, {"task_id": "b", "prompt": "cloud q"}]),
+        encoding="utf-8",
+    )
+
+    run_with_context(
+        RuntimeOptions(input_path=input_path, output_path=tmp_path / "results.json", router_weights=weights_path),
+        context,
+    )
+
+    assert events.index("embedder_closed") < events.index(f"build_{Provider.LLAMA.value}")
+
+
 def test_load_tasks_rejects_malformed_input(tmp_path):
     input_path = tmp_path / "tasks.json"
     input_path.write_text(json.dumps([{"task_id": "missing-prompt"}]), encoding="utf-8")

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import gc
 import json
+import os
 import sys
 from concurrent import futures
 from dataclasses import dataclass
@@ -12,7 +14,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from gullivers_router.config import Settings
-from gullivers_router.inference.base import UsageReporting, system_and_user_message, user_message
+from gullivers_router.inference.base import Closeable, UsageReporting, system_and_user_message, user_message
 from gullivers_router.inference.factory import build_chat_model, build_embedding_model
 from gullivers_router.router.model import category_thresholds, load_numpy, predict_categories, probabilities
 from gullivers_router.training.generate import DEFAULT_CONCURRENCY, complete_with_retry
@@ -132,9 +134,14 @@ def run_with_context(options: RuntimeOptions, context: RuntimeContext) -> None:
         write_results(options.output_path, [classification_record(decision) for decision in decisions])
         return
 
+    _log_rss("after classification")
+    _release_embedder(embedder)
+    _log_rss("after releasing embedder")
+
     local = context.chat_factory(context.settings.local)
     cloud = context.chat_factory(context.settings.cloud)
     answers = answer_tasks(decisions, local, cloud, workers=options.workers)
+    _log_rss("after answering")
     _log(f"writing {len(answers)} answers -> {options.output_path}")
     write_results(options.output_path, [{"task_id": task_id, "answer": answer} for task_id, answer in answers])
 
@@ -283,6 +290,28 @@ def _log_cloud_usage(cloud: ChatModel) -> None:
         return
     usage = cloud.usage
     _log(f"cloud tokens: prompt={usage.prompt_tokens} completion={usage.completion_tokens} total={usage.total_tokens}")
+
+
+def _release_embedder(embedder: EmbeddingModel) -> None:
+    """Free the embedder's model before the local GGUF loads.
+
+    On the memory-constrained submission host, holding the embedder resident while the local
+    model loads can push the process into swap and stall generation. The embedder is unused past
+    classification, so releasing it reclaims that headroom.
+    """
+    if isinstance(embedder, Closeable):
+        embedder.close()
+    gc.collect()
+
+
+def _log_rss(label: str) -> None:
+    """Log current resident memory on Linux; a no-op where ``/proc`` is unavailable."""
+    try:
+        resident_pages = int(Path("/proc/self/statm").read_text(encoding="utf-8").split()[1])
+    except (OSError, IndexError, ValueError):
+        return
+    mib = resident_pages * os.sysconf("SC_PAGE_SIZE") / 1024 / 1024
+    _log(f"rss {label}: {mib:.0f} MiB")
 
 
 def _log(message: str) -> None:

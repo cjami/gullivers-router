@@ -249,3 +249,9 @@ class LlamaCppEmbedder:
         truncated_tokens = truncate_head_tail(tokens, limit=self._n_ctx)
         truncated_text = model.detokenize(truncated_tokens).decode("utf-8", errors="ignore")
         return model.embed(truncated_text)
+
+    def close(self) -> None:
+        """Release the underlying GGUF model, freeing its memory."""
+        if self._model is not None:
+            self._model.close()
+            self._model = None

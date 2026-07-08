@@ -76,6 +76,15 @@ class UsageReporting(Protocol):
 
 
 @runtime_checkable
+class Closeable(Protocol):
+    """A backend that can release its underlying model and memory."""
+
+    def close(self) -> None:
+        """Release any resources the backend holds."""
+        ...
+
+
+@runtime_checkable
 class StructuredChatModel(ChatModel, Protocol):
     """A chat model that can constrain output to a Pydantic response model."""
 
