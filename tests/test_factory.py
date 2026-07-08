@@ -24,7 +24,7 @@ def test_build_chat_model_local():
     chat = factory.build_chat_model(_cfg(Provider.LLAMA))
 
     assert isinstance(chat, LlamaCppChat)
-    assert chat._enable_thinking is True
+    assert chat._enable_thinking is False
     assert chat._temperature == 1.0
     assert chat._top_p == 0.95
     assert chat._top_k == 64
@@ -295,7 +295,7 @@ def test_llama_chat_enables_thinking_for_compatible_template(monkeypatch):
             raise AssertionError
 
     monkeypatch.setitem(sys.modules, "llama_cpp", SimpleNamespace(Llama=FakeLlama))
-    chat = LlamaCppChat(_cfg(Provider.LLAMA, repo_id="repo", filename="model.gguf"))
+    chat = LlamaCppChat(_cfg(Provider.LLAMA, repo_id="repo", filename="model.gguf"), enable_thinking=True)
 
     assert chat.complete([Message(Role.USER, "hello")]) == "thinking"
     assert captured["enable_thinking"] is True

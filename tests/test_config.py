@@ -126,7 +126,7 @@ def test_llama_runtime_defaults_keep_training_profile():
     assert settings.local.n_ctx == 2048
     assert settings.local.n_gpu_layers == -1
     assert settings.local.flash_attn is True
-    assert settings.local.enable_thinking is True
+    assert settings.local.enable_thinking is False
     assert settings.local.temperature == 1.0
     assert settings.local.top_p == 0.95
     assert settings.local.top_k == 64
