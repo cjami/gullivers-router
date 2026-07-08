@@ -50,6 +50,7 @@ def test_factory_passes_llama_chat_runtime_options(tmp_path):
             temperature=0.7,
             top_p=0.8,
             top_k=32,
+            max_tokens=1024,
             n_threads=2,
             model_root=tmp_path,
         )
@@ -63,6 +64,7 @@ def test_factory_passes_llama_chat_runtime_options(tmp_path):
     assert chat._temperature == 0.7
     assert chat._top_p == 0.8
     assert chat._top_k == 32
+    assert chat._max_tokens == 1024
     assert chat._n_threads == 2
     assert chat._model_root == tmp_path
 

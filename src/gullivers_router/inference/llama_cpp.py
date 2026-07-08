@@ -74,13 +74,16 @@ class LlamaCppChat:
         temperature: float = DEFAULT_TEMPERATURE,
         top_p: float = DEFAULT_TOP_P,
         top_k: int = DEFAULT_TOP_K,
+        max_tokens: int | None = None,
         n_threads: int | None = None,
         model_root: Path = DEFAULT_MODEL_ROOT,
     ) -> None:
         """Configure the model; the GGUF loads lazily on first use.
 
         ``n_gpu_layers`` defaults to offloading every layer for local training. Submission
-        builds override it to zero for CPU-only inference.
+        builds override it to zero for CPU-only inference. ``max_tokens`` defaults to unset
+        (unbounded) so training generation is never truncated; runtime builds cap it as a
+        fail-safe against runaway generation.
         """
         self._config = config
         self._n_ctx = n_ctx
@@ -90,6 +93,7 @@ class LlamaCppChat:
         self._temperature = temperature
         self._top_p = top_p
         self._top_k = top_k
+        self._max_tokens = max_tokens
         self._n_threads = n_threads
         self._model_root = model_root
         self._model = None
@@ -160,6 +164,7 @@ class LlamaCppChat:
             "temperature": self._temperature,
             "top_p": self._top_p,
             "top_k": self._top_k,
+            "max_tokens": self._max_tokens,
         }
 
     def _template_supports_enable_thinking(self, model: object) -> bool:

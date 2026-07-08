@@ -104,6 +104,7 @@ def test_llama_runtime_options_can_be_configured():
             "LOCAL_TEMPERATURE": "0.7",
             "LOCAL_TOP_P": "0.8",
             "LOCAL_TOP_K": "32",
+            "LOCAL_MAX_TOKENS": "1024",
             "LOCAL_N_THREADS": "2",
             "LOCAL_MODEL_ROOT": "/app/models",
         }
@@ -116,6 +117,7 @@ def test_llama_runtime_options_can_be_configured():
     assert settings.local.temperature == 0.7
     assert settings.local.top_p == 0.8
     assert settings.local.top_k == 32
+    assert settings.local.max_tokens == 1024
     assert settings.local.n_threads == 2
     assert settings.local.model_root == Path("/app/models")
 
@@ -130,6 +132,7 @@ def test_llama_runtime_defaults_keep_training_profile():
     assert settings.local.temperature == 1.0
     assert settings.local.top_p == 0.95
     assert settings.local.top_k == 64
+    assert settings.local.max_tokens is None
     assert settings.local.model_root == Path("models")
 
 

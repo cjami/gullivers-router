@@ -43,6 +43,7 @@ def build_chat_model(config: ModelConfig) -> ChatModel:
                 temperature=config.temperature if config.temperature is not None else DEFAULT_TEMPERATURE,
                 top_p=config.top_p if config.top_p is not None else DEFAULT_TOP_P,
                 top_k=config.top_k if config.top_k is not None else DEFAULT_TOP_K,
+                max_tokens=config.max_tokens,
                 n_threads=config.n_threads,
                 model_root=config.model_root or DEFAULT_MODEL_ROOT,
             )

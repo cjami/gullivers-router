@@ -36,6 +36,7 @@ class ModelConfig:
     temperature: float | None = None
     top_p: float | None = None
     top_k: int | None = None
+    max_tokens: int | None = None
     n_threads: int | None = None
     model_root: Path | None = None
 
@@ -54,6 +55,7 @@ class _RoleDefaults:
     temperature: float | None = None
     top_p: float | None = None
     top_k: int | None = None
+    max_tokens: int | None = None
     n_threads: int | None = None
     model_root: Path | None = None
 
@@ -119,6 +121,7 @@ def _role_config(env: Mapping[str, str], role: str) -> ModelConfig:
         temperature=_optional_float(value("TEMPERATURE", _string(defaults.temperature))),
         top_p=_optional_float(value("TOP_P", _string(defaults.top_p))),
         top_k=_optional_int(value("TOP_K", _string(defaults.top_k))),
+        max_tokens=_optional_int(value("MAX_TOKENS", _string(defaults.max_tokens))),
         n_threads=_optional_int(value("N_THREADS", _string(defaults.n_threads))),
         model_root=_optional_path(value("MODEL_ROOT", _string(defaults.model_root))),
     )
