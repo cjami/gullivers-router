@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "gullivers-router"
-version = "0.1.0"
+version = "0.1.1"
 description = "A low-cost routing system that splits traffic between a free local model and a heavy-duty cloud AI based on query difficulty."
 readme = "README.md"
 license = "MIT"
