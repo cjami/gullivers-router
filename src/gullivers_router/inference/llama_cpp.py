@@ -128,18 +128,7 @@ class LlamaCppChat:
 
     def complete(self, messages: Sequence[Message]) -> str:
         """Generate a response for a single prompt."""
-        result = self._create_chat_completion(
-            {"messages": [m.as_dict() for m in messages]},
-            enable_thinking=self._enable_thinking,
-        )
-        return _completion_content(result)
-
-    def complete_with_thinking(self, messages: Sequence[Message], *, enable_thinking: bool) -> str:
-        """Generate a response with a per-call thinking override."""
-        result = self._create_chat_completion(
-            {"messages": [m.as_dict() for m in messages]},
-            enable_thinking=enable_thinking,
-        )
+        result = self._create_chat_completion({"messages": [m.as_dict() for m in messages]})
         return _completion_content(result)
 
     def complete_structured(
@@ -152,28 +141,22 @@ class LlamaCppChat:
             {
                 "messages": [m.as_dict() for m in messages],
                 "response_format": llama_cpp_json_schema_response_format(response_model),
-            },
-            enable_thinking=self._enable_thinking,
+            }
         )
         content = _completion_content(result)
         return response_model.model_validate_json(content)
 
-    def _create_chat_completion(
-        self,
-        payload: ChatCompletionDict,
-        *,
-        enable_thinking: bool | None,
-    ) -> ChatCompletionDict:
+    def _create_chat_completion(self, payload: ChatCompletionDict) -> ChatCompletionDict:
         model = self._load()
         payload = {**payload, **self._sampling_payload()}
-        if enable_thinking is None or not self._template_supports_enable_thinking(model):
+        if self._enable_thinking is None or not self._template_supports_enable_thinking(model):
             return cast(ChatCompletionDict, model.create_chat_completion(**payload))
 
         handler = self._chat_completion_handler(model)
         if handler is None:
             return cast(ChatCompletionDict, model.create_chat_completion(**payload))
 
-        return handler(llama=model, **payload, enable_thinking=enable_thinking)
+        return handler(llama=model, **payload, enable_thinking=self._enable_thinking)
 
     def _sampling_payload(self) -> ChatCompletionDict:
         return {

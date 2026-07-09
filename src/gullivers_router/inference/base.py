@@ -66,15 +66,6 @@ class ChatModel(Protocol):
 
 
 @runtime_checkable
-class ThinkingChatModel(ChatModel, Protocol):
-    """A chat model that can override thinking for an individual completion."""
-
-    def complete_with_thinking(self, messages: Sequence[Message], *, enable_thinking: bool) -> str:
-        """Return an answer with thinking explicitly enabled or disabled."""
-        ...
-
-
-@runtime_checkable
 class UsageReporting(Protocol):
     """A model that reports cumulative token usage across its calls."""
 

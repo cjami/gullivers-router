@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from gullivers_router.config import Settings
-from gullivers_router.inference.base import Closeable, ThinkingChatModel, UsageReporting, system_and_user_message
+from gullivers_router.inference.base import Closeable, UsageReporting, system_and_user_message
 from gullivers_router.inference.factory import build_chat_model, build_embedding_model
 from gullivers_router.router.model import category_thresholds, load_numpy, predict_categories, probabilities
 from gullivers_router.training.generate import DEFAULT_CONCURRENCY, complete_with_retry
@@ -34,7 +34,6 @@ CLOUD_ROUTE = "cloud"
 _CONCISE_SYSTEM_PROMPT = (
     "Answer accurately and concisely. Give the shortest complete answer; skip preamble, restated questions, and filler."
 )
-_LOCAL_THINKING_CATEGORIES = frozenset({"mathematical_reasoning", "logical_reasoning"})
 
 __all__ = [
     "CLOUD_ROUTE",
@@ -268,7 +267,9 @@ def answer_tasks(
         }
         for index, decision in enumerate(local_decisions, start=1):
             _log(f"[local {index}/{len(local_decisions)}] {decision.task.task_id}")
-            answers[decision.task.task_id] = _complete_local(local, decision)
+            answers[decision.task.task_id] = local.complete(
+                system_and_user_message(_CONCISE_SYSTEM_PROMPT, decision.task.prompt)
+            )
         for completed, future in enumerate(futures.as_completed(cloud_futures), start=1):
             task_id = cloud_futures[future]
             answers[task_id] = future.result()
@@ -278,13 +279,6 @@ def answer_tasks(
         _log_cloud_usage(cloud)
 
     return [(decision.task.task_id, answers[decision.task.task_id]) for decision in decisions]
-
-
-def _complete_local(local: ChatModel, decision: _Decision) -> str:
-    messages = system_and_user_message(_CONCISE_SYSTEM_PROMPT, decision.task.prompt)
-    if decision.category in _LOCAL_THINKING_CATEGORIES and isinstance(local, ThinkingChatModel):
-        return local.complete_with_thinking(messages, enable_thinking=True)
-    return local.complete(messages)
 
 
 def write_results(path: Path, records: Sequence[dict[str, object]]) -> None:
