@@ -188,6 +188,20 @@ def _known_category_weights(path):
     )
 
 
+def _cloud_fast_category_weights(path):
+    np.savez(
+        path,
+        weights=np.array([1.0]),
+        bias=np.float64(0.0),
+        alpha=np.float64(0.5),
+        normalize=True,
+        cat_weights=np.array([[1.0], [-1.0]]),
+        cat_bias=np.array([0.0, 0.0]),
+        cat_classes=np.array(["factual_knowledge", "mathematical_reasoning"]),
+        cat_alpha=np.array([0.1, 0.1]),
+    )
+
+
 def test_classify_tasks_applies_per_category_thresholds(tmp_path):
     weights_path = tmp_path / "router.npz"
     _category_weights(weights_path)
@@ -237,6 +251,51 @@ def test_answer_prompts_include_category_hints(tmp_path):
     assert "show brief calculations" in cloud_system
     assert chats[Provider.LLAMA].calls[0][-1].content == "local factual question"
     assert chats[Provider.FIREWORKS].calls[0][-1].content == "cloud hard math"
+
+
+def test_easy_cloud_categories_disable_thinking(tmp_path):
+    input_path = tmp_path / "tasks.json"
+    output_path = tmp_path / "results.json"
+    weights_path = tmp_path / "router.npz"
+    _cloud_fast_category_weights(weights_path)
+    input_path.write_text(
+        json.dumps(
+            [
+                {"task_id": "fast", "prompt": "cloud factual question"},
+                {"task_id": "regular", "prompt": "local hard math"},
+            ]
+        ),
+        encoding="utf-8",
+    )
+    built = []
+    chats = {
+        "regular": FakeChat("regular"),
+        "fast": FakeChat("fast"),
+        "local": FakeChat("local"),
+    }
+
+    def chat_factory(config):
+        built.append(config)
+        if config.provider == Provider.LLAMA:
+            return chats["local"]
+        if config.enable_thinking is False and config.reasoning_effort is None:
+            return chats["fast"]
+        return chats["regular"]
+
+    run_with_context(
+        RuntimeOptions(input_path=input_path, output_path=output_path, router_weights=weights_path),
+        _context(chat_factory=chat_factory),
+    )
+
+    assert json.loads(output_path.read_text(encoding="utf-8")) == [
+        {"task_id": "fast", "answer": "fast: cloud factual question"},
+        {"task_id": "regular", "answer": "regular: local hard math"},
+    ]
+    cloud_configs = [config for config in built if config.provider == Provider.FIREWORKS]
+    assert [(config.enable_thinking, config.reasoning_effort) for config in cloud_configs] == [
+        (None, None),
+        (False, None),
+    ]
 
 
 def test_cloud_answers_preserve_input_order(tmp_path):

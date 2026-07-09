@@ -7,7 +7,7 @@ import json
 import os
 import sys
 from concurrent import futures
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -45,6 +45,12 @@ _CATEGORY_SYSTEM_HINTS = {
     ),
     "sentiment_classification": "For sentiment: label positive, negative, or mixed; justify only if asked.",
     "text_summarisation": "For summaries: preserve who does what and obey format or length constraints.",
+}
+_FAST_CLOUD_CATEGORIES = {
+    "factual_knowledge",
+    "named_entity_recognition",
+    "sentiment_classification",
+    "text_summarisation",
 }
 
 __all__ = [
@@ -152,7 +158,12 @@ def run_with_context(options: RuntimeOptions, context: RuntimeContext) -> None:
 
     local = context.chat_factory(context.settings.local)
     cloud = context.chat_factory(context.settings.cloud)
-    answers = answer_tasks(decisions, local, cloud, workers=options.workers)
+    cloud_fast = (
+        context.chat_factory(_fast_cloud_config(context.settings.cloud))
+        if any(_uses_fast_cloud(decision) for decision in decisions)
+        else None
+    )
+    answers = answer_tasks(decisions, local, cloud, cloud_fast=cloud_fast, workers=options.workers)
     _log_rss("after answering")
     _log(f"writing {len(answers)} answers -> {options.output_path}")
     write_results(options.output_path, [{"task_id": task_id, "answer": answer} for task_id, answer in answers])
@@ -256,6 +267,7 @@ def answer_tasks(
     local: ChatModel,
     cloud: ChatModel,
     *,
+    cloud_fast: ChatModel | None = None,
     workers: int,
 ) -> list[tuple[str, str]]:
     """Generate answers for routed tasks, preserving input order.
@@ -273,7 +285,9 @@ def answer_tasks(
     with futures.ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
         cloud_futures = {
             pool.submit(
-                complete_with_retry, cloud, system_and_user_message(_system_prompt(decision), decision.task.prompt)
+                complete_with_retry,
+                _cloud_model(decision, cloud, cloud_fast),
+                system_and_user_message(_system_prompt(decision), decision.task.prompt),
             ): decision.task.task_id
             for decision in cloud_decisions
         }
@@ -291,6 +305,20 @@ def answer_tasks(
         _log_cloud_usage(cloud)
 
     return [(decision.task.task_id, answers[decision.task.task_id]) for decision in decisions]
+
+
+def _cloud_model(decision: _Decision, cloud: ChatModel, cloud_fast: ChatModel | None) -> ChatModel:
+    if cloud_fast is not None and _uses_fast_cloud(decision):
+        return cloud_fast
+    return cloud
+
+
+def _uses_fast_cloud(decision: _Decision) -> bool:
+    return decision.route == CLOUD_ROUTE and decision.category in _FAST_CLOUD_CATEGORIES
+
+
+def _fast_cloud_config(config: ModelConfig) -> ModelConfig:
+    return replace(config, enable_thinking=False, reasoning_effort=None)
 
 
 def _system_prompt(decision: _Decision) -> str:
