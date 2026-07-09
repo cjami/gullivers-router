@@ -136,10 +136,10 @@ def test_llama_runtime_defaults_keep_training_profile():
     assert settings.local.model_root == Path("models")
 
 
-def test_judge_disables_reasoning_but_cloud_leaves_it_unset():
+def test_judge_and_cloud_leave_reasoning_unset():
     settings = Settings.from_env({})
 
-    assert settings.judge.enable_thinking is False
+    assert settings.judge.enable_thinking is None
     assert settings.cloud.enable_thinking is None
 
 

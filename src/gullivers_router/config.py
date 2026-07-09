@@ -90,7 +90,6 @@ _ROLE_DEFAULTS: dict[str, _RoleDefaults] = {
         provider=Provider.FIREWORKS,
         model="accounts/fireworks/models/glm-5p2",
         base_url=FIREWORKS_BASE_URL,
-        enable_thinking=False,
     ),
 }
 
