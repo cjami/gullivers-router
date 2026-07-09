@@ -68,7 +68,7 @@ def test_train_router_writes_artifacts_and_metrics(tmp_path):
     assert metrics["selected_regularization"] in {0.01, 0.1, 1.0, 10.0, 100.0}
     assert metrics["n_train"] + metrics["n_calibration"] + metrics["n_test"] == metrics["n_total"]
     assert metrics["n_val"] == metrics["n_calibration"] + metrics["n_test"]
-    assert metrics["quality_floor"] == 3.0
+    assert metrics["quality_floor"] == 4.0
     assert metrics["accuracy_gate"] == 0.85
     assert metrics["target_margin"] == 0.025
     assert metrics["target_pass_rate"] == pytest.approx(0.875)
