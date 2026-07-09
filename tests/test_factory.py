@@ -307,6 +307,32 @@ def test_llama_chat_enables_thinking_for_compatible_template(monkeypatch):
     assert captured["llama"] is chat._model
 
 
+def test_llama_chat_overrides_thinking_for_one_completion(monkeypatch):
+    captured = {}
+
+    class FakeLlama:
+        @classmethod
+        def from_pretrained(cls, **_kwargs) -> "FakeLlama":
+            return cls()
+
+        def __init__(self):
+            self.metadata = {"tokenizer.chat_template": "{% if enable_thinking %}<think>{% endif %}"}
+            self.chat_handler = self._handler
+
+        def _handler(self, **kwargs):
+            captured.update(kwargs)
+            return {"choices": [{"message": {"content": "answer"}}]}
+
+    monkeypatch.setitem(sys.modules, "llama_cpp", SimpleNamespace(Llama=FakeLlama))
+    chat = LlamaCppChat(
+        _cfg(Provider.LLAMA, repo_id="repo", filename="model.gguf"),
+        enable_thinking=False,
+    )
+
+    assert chat.complete_with_thinking([Message(Role.USER, "hello")], enable_thinking=True) == "answer"
+    assert captured["enable_thinking"] is True
+
+
 def test_llama_chat_ignores_thinking_for_unsupported_template(monkeypatch):
     captured = {}
 

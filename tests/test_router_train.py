@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from gullivers_router.router.model import RouterModel
+from gullivers_router.router.model import CategoryModel, RouterModel
 from gullivers_router.training import store
 from gullivers_router.training.pipeline import Artifacts
 from gullivers_router.training.router import (
@@ -10,6 +10,7 @@ from gullivers_router.training.router import (
     _load_dataset,
     _needs_cloud,
     _per_category_alpha,
+    _runtime_categories,
     train_router,
 )
 
@@ -68,10 +69,11 @@ def test_train_router_writes_artifacts_and_metrics(tmp_path):
     assert metrics["n_train"] + metrics["n_calibration"] + metrics["n_test"] == metrics["n_total"]
     assert metrics["n_val"] == metrics["n_calibration"] + metrics["n_test"]
     assert metrics["quality_floor"] == 3.0
-    assert metrics["accuracy_gate"] == 0.80
-    assert metrics["target_margin"] == 0.03
-    assert metrics["target_pass_rate"] == pytest.approx(0.83)
+    assert metrics["accuracy_gate"] == 0.85
+    assert metrics["target_margin"] == 0.025
+    assert metrics["target_pass_rate"] == pytest.approx(0.875)
     assert metrics["selected_alpha_source"] == "calibration"
+    assert metrics["threshold_category_source"] == "predicted"
     assert metrics["global_operating_point"]["alpha"] == metrics["calibration_operating_point"]["alpha"]
     assert metrics["operating_point"]["policy"] == "per_category"
     assert set(metrics["per_category_alpha"]) == {"math", "chat"}
@@ -107,7 +109,13 @@ def test_per_category_alpha_keeps_reliable_category_local():
     data = _dataset(["easy"] * size + ["hard"] * size, [5.0] * size + [2.0] * size, [5.0] * (2 * size))
     risk = np.array([0.1] * size + [0.9] * size)
 
-    alphas = _per_category_alpha(risk, data, quality_floor=3.0, target_pass_rate=0.83, global_alpha=0.5)
+    alphas = _per_category_alpha(
+        risk,
+        data,
+        quality_floor=3.0,
+        target_pass_rate=0.83,
+        global_alpha=0.5,
+    )
 
     assert alphas["easy"] > alphas["hard"]
 
@@ -116,9 +124,29 @@ def test_per_category_alpha_falls_back_when_too_few_rows():
     data = _dataset(["rare"] * 5, [2.0] * 5, [5.0] * 5)
     risk = np.full(5, 0.9)
 
-    alphas = _per_category_alpha(risk, data, quality_floor=3.0, target_pass_rate=0.83, global_alpha=0.42)
+    alphas = _per_category_alpha(
+        risk,
+        data,
+        quality_floor=3.0,
+        target_pass_rate=0.83,
+        global_alpha=0.42,
+    )
 
     assert alphas == {"rare": 0.42}
+
+
+def test_runtime_categories_use_category_model_predictions(monkeypatch):
+    data = _dataset(["true-a", "true-b"], [5.0, 5.0], [5.0, 5.0])
+    model = CategoryModel.__new__(CategoryModel)
+
+    def predict(embeddings):
+        assert embeddings is data.embeddings
+        return np.array(["predicted-b", "predicted-a"])
+
+    monkeypatch.setattr(model, "predict", predict)
+
+    assert _runtime_categories(model, data) == ["predicted-b", "predicted-a"]
+    assert _runtime_categories(None, data) == data.categories
 
 
 def test_train_router_exports_category_head(tmp_path):

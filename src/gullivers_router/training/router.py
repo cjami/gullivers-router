@@ -13,7 +13,7 @@ recover each prompt's category from its embedding alone.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -29,8 +29,8 @@ if TYPE_CHECKING:
 DEFAULT_VAL_FRACTION = 0.2
 DEFAULT_SEED = DEFAULT_INFERENCE_SEED
 DEFAULT_QUALITY_FLOOR = 3.0
-DEFAULT_ACCURACY_GATE = 0.80
-DEFAULT_TARGET_MARGIN = 0.03
+DEFAULT_ACCURACY_GATE = 0.85
+DEFAULT_TARGET_MARGIN = 0.025
 _MIN_CATEGORY_CALIBRATION = 20
 _REGULARIZATION_GRID = (0.01, 0.1, 1.0, 10.0, 100.0)
 _CV_SPLITS = 5
@@ -133,10 +133,10 @@ def _per_category_alpha(
     Because every kept category clears the target, their weighted blend clears it too; categories
     with too few calibration rows to trust default to the global threshold.
     """
-    categories = np.array(data.categories)
+    category_array = np.array(data.categories)
     alphas: dict[str, float] = {}
     for category in sorted(set(data.categories)):
-        mask = categories == category
+        mask = category_array == category
         if int(np.count_nonzero(mask)) < _MIN_CATEGORY_CALIBRATION:
             alphas[category] = global_alpha
             continue
@@ -144,6 +144,13 @@ def _per_category_alpha(
         point = evaluate.cloud_fraction_for_pass_rate(curve, target_pass_rate)
         alphas[category] = point.alpha if point is not None else global_alpha
     return alphas
+
+
+def _runtime_categories(category_model: CategoryModel | None, data: _Dataset) -> list[str]:
+    """Return the categories the deployed router would assign to these rows."""
+    if category_model is None:
+        return data.categories
+    return [str(category) for category in category_model.predict(data.embeddings)]
 
 
 def _fit_category_model(train: _Dataset) -> CategoryModel | None:
@@ -249,8 +256,16 @@ def train_router(  # noqa: PLR0913 - each knob configures a distinct stage of th
         quality_floor,
     )
     calibration_point = _choose_alpha(calibration_curve, target_pass_rate)
+    threshold_calibration = replace(
+        calibration,
+        categories=_runtime_categories(category_model, calibration),
+    )
     alpha_by_category = _per_category_alpha(
-        calibration_risk, calibration, quality_floor, target_pass_rate, calibration_point.alpha
+        calibration_risk,
+        threshold_calibration,
+        quality_floor,
+        target_pass_rate,
+        calibration_point.alpha,
     )
 
     test_risk = model.predict_proba(test.embeddings)
@@ -408,6 +423,7 @@ def _report(inputs: _ReportInputs) -> dict:
         "target_pass_rate": inputs.target_pass_rate,
         "selected_regularization": inputs.regularization,
         "selected_alpha_source": "calibration",
+        "threshold_category_source": "predicted",
         "sample_weight": _sample_weight_summary(train.sample_weights),
         "average_pass_rate": evaluate.average_pass_rate(inputs.test_curve),
         "calibration_average_pass_rate": evaluate.average_pass_rate(inputs.calibration_curve),

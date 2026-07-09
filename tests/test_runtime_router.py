@@ -37,6 +37,16 @@ class FakeChat:
         return f"{self.prefix}: {prompt}"
 
 
+class FakeThinkingChat(FakeChat):
+    def __init__(self, prefix):
+        super().__init__(prefix)
+        self.thinking_calls = []
+
+    def complete_with_thinking(self, messages, *, enable_thinking):
+        self.thinking_calls.append((list(messages), enable_thinking))
+        return f"{self.prefix} thinking: {messages[-1].content}"
+
+
 def _settings():
     return Settings(
         hf_token=None,
@@ -174,6 +184,20 @@ def _category_weights(path):
     )
 
 
+def _local_reasoning_weights(path, category):
+    np.savez(
+        path,
+        weights=np.array([0.0]),
+        bias=np.float64(0.0),
+        alpha=np.float64(0.9),
+        normalize=True,
+        cat_weights=np.array([[-1.0], [1.0]]),
+        cat_bias=np.array([0.0, 0.0]),
+        cat_classes=np.array([category, "factual_knowledge"]),
+        cat_alpha=np.array([0.9, 0.9]),
+    )
+
+
 def test_classify_tasks_applies_per_category_thresholds(tmp_path):
     weights_path = tmp_path / "router.npz"
     _category_weights(weights_path)
@@ -190,6 +214,43 @@ def test_classify_tasks_applies_per_category_thresholds(tmp_path):
     assert [decision.category for decision in decisions] == ["easy", "hard"]
     assert [decision.threshold for decision in decisions] == [0.9, 0.1]
     assert [decision.route for decision in decisions] == [LOCAL_ROUTE, CLOUD_ROUTE]
+
+
+@pytest.mark.parametrize("category", ["mathematical_reasoning", "logical_reasoning"])
+def test_locally_routed_reasoning_categories_enable_thinking(tmp_path, category):
+    class CategoryEmbedder:
+        def embed(self, text):
+            return [-1.0] if "reasoning" in text else [1.0]
+
+    input_path = tmp_path / "tasks.json"
+    output_path = tmp_path / "results.json"
+    weights_path = tmp_path / "router.npz"
+    _local_reasoning_weights(weights_path, category)
+    input_path.write_text(
+        json.dumps(
+            [
+                {"task_id": "reasoning", "prompt": "local reasoning task"},
+                {"task_id": "factual", "prompt": "local factual task"},
+            ]
+        ),
+        encoding="utf-8",
+    )
+    local = FakeThinkingChat("local")
+    context = RuntimeContext(
+        settings=_settings(),
+        embedding_factory=lambda config: CategoryEmbedder(),
+        chat_factory=lambda config: local if config.provider == Provider.LLAMA else FakeChat("cloud"),
+    )
+
+    run_with_context(
+        RuntimeOptions(input_path=input_path, output_path=output_path, router_weights=weights_path),
+        context,
+    )
+
+    assert len(local.thinking_calls) == 1
+    assert local.thinking_calls[0][0][-1].content == "local reasoning task"
+    assert local.thinking_calls[0][1] is True
+    assert local.calls[0][-1].content == "local factual task"
 
 
 def test_cloud_answers_preserve_input_order(tmp_path):
