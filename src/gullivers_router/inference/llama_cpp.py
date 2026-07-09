@@ -24,6 +24,13 @@ DEFAULT_ENABLE_THINKING = False
 DEFAULT_TEMPERATURE = 1.0
 DEFAULT_TOP_P = 0.95
 DEFAULT_TOP_K = 64
+_POOLING_TYPES = {
+    "none": 0,
+    "mean": 1,
+    "cls": 2,
+    "last": 3,
+    "rank": 4,
+}
 type ChatCompletionDict = dict[str, object]
 type ChatCompletionHandler = Callable[..., ChatCompletionDict]
 
@@ -58,6 +65,17 @@ def _local_model_path(config: ModelConfig, model_root: Path) -> Path | None:
 
 def _has_glob(pattern: str) -> bool:
     return any(char in pattern for char in "*?[")
+
+
+def _pooling_type(name: str | None) -> int:
+    if name is None:
+        return -1
+    try:
+        return _POOLING_TYPES[name.lower()]
+    except KeyError as error:
+        choices = ", ".join(_POOLING_TYPES)
+        msg = f"unsupported pooling type {name!r}; expected one of: {choices}"
+        raise ValueError(msg) from error
 
 
 class LlamaCppChat:
@@ -202,7 +220,7 @@ def _completion_content(result: ChatCompletionDict) -> str:
 class LlamaCppEmbedder:
     """Dense embeddings from a locally hosted GGUF model."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 - backend controls are independently configurable
         self,
         config: ModelConfig,
         *,
@@ -210,6 +228,8 @@ class LlamaCppEmbedder:
         n_gpu_layers: int = OFFLOAD_ALL_LAYERS,
         n_threads: int | None = None,
         model_root: Path = DEFAULT_MODEL_ROOT,
+        pooling_type: str | None = None,
+        input_prefix: str = "",
     ) -> None:
         """Configure the embedder; the GGUF loads lazily on first use."""
         self._config = config
@@ -217,6 +237,8 @@ class LlamaCppEmbedder:
         self._n_gpu_layers = n_gpu_layers
         self._n_threads = n_threads
         self._model_root = model_root
+        self._pooling_type = _pooling_type(pooling_type)
+        self._input_prefix = input_prefix
         self._model = None
 
     def _load(self):  # noqa: ANN202
@@ -231,6 +253,7 @@ class LlamaCppEmbedder:
                     n_gpu_layers=self._n_gpu_layers,
                     n_threads=self._n_threads,
                     embedding=True,
+                    pooling_type=self._pooling_type,
                     seed=DEFAULT_INFERENCE_SEED,
                     verbose=False,
                 )
@@ -242,6 +265,7 @@ class LlamaCppEmbedder:
                     n_gpu_layers=self._n_gpu_layers,
                     n_threads=self._n_threads,
                     embedding=True,
+                    pooling_type=self._pooling_type,
                     seed=DEFAULT_INFERENCE_SEED,
                     verbose=False,
                 )
@@ -250,7 +274,8 @@ class LlamaCppEmbedder:
     def embed(self, text: str) -> list[float]:
         """Embed text, applying head-and-tail truncation past the context window."""
         model = self._load()
-        tokens = model.tokenize(text.encode("utf-8"), add_bos=True)
+        input_text = f"{self._input_prefix}{text}"
+        tokens = model.tokenize(input_text.encode("utf-8"), add_bos=True)
         truncated_tokens = truncate_head_tail(tokens, limit=self._n_ctx)
         truncated_text = model.detokenize(truncated_tokens).decode("utf-8", errors="ignore")
         return model.embed(truncated_text)

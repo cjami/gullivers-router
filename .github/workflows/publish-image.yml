@@ -34,7 +34,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: models
-          key: models-gemma-4-E2B_q4_0-it-embeddinggemma-300M-Q8_0
+          key: models-gemma-4-E2B_q4_0-it-qwen3-embedding-0.6B-Q8_0
 
       - name: Download GGUF models
         if: steps.models-cache.outputs.cache-hit != 'true'
@@ -44,8 +44,8 @@ jobs:
           pip install --quiet "huggingface_hub[cli]"
           hf download google/gemma-4-E2B-it-qat-q4_0-gguf gemma-4-E2B_q4_0-it.gguf \
             --local-dir models/google/gemma-4-E2B-it-qat-q4_0-gguf
-          hf download ggml-org/embeddinggemma-300M-GGUF embeddinggemma-300M-Q8_0.gguf \
-            --local-dir models/ggml-org/embeddinggemma-300M-GGUF
+          hf download Qwen/Qwen3-Embedding-0.6B-GGUF Qwen3-Embedding-0.6B-Q8_0.gguf \
+            --local-dir models/Qwen/Qwen3-Embedding-0.6B-GGUF
 
       - name: Lowercase image name
         run: echo "IMAGE=${IMAGE,,}" >> "$GITHUB_ENV"

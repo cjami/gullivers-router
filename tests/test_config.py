@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from gullivers_router.config import Settings
+from gullivers_router.config import QWEN_ROUTING_PREFIX, Settings
 from gullivers_router.inference.base import Provider
 from gullivers_router.inference.factory import build_chat_model
 
@@ -134,6 +134,27 @@ def test_llama_runtime_defaults_keep_training_profile():
     assert settings.local.top_k == 64
     assert settings.local.max_tokens is None
     assert settings.local.model_root == Path("models")
+
+
+def test_embedding_defaults_use_qwen_for_routing_classification():
+    settings = Settings.from_env({})
+
+    assert settings.embedding.repo_id == "Qwen/Qwen3-Embedding-0.6B-GGUF"
+    assert settings.embedding.filename == "Qwen3-Embedding-0.6B-Q8_0.gguf"
+    assert settings.embedding.pooling_type == "last"
+    assert settings.embedding.input_prefix == QWEN_ROUTING_PREFIX
+
+
+def test_embedding_pooling_and_prefix_can_be_overridden():
+    settings = Settings.from_env(
+        {
+            "EMBEDDING_POOLING_TYPE": "mean",
+            "EMBEDDING_INPUT_PREFIX": "classify: ",
+        }
+    )
+
+    assert settings.embedding.pooling_type == "mean"
+    assert settings.embedding.input_prefix == "classify: "
 
 
 def test_judge_and_cloud_leave_reasoning_unset():

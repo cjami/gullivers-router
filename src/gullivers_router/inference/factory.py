@@ -64,6 +64,8 @@ def build_embedding_model(config: ModelConfig) -> EmbeddingModel:
                 n_gpu_layers=config.n_gpu_layers if config.n_gpu_layers is not None else OFFLOAD_ALL_LAYERS,
                 n_threads=config.n_threads,
                 model_root=config.model_root or DEFAULT_MODEL_ROOT,
+                pooling_type=config.pooling_type,
+                input_prefix=config.input_prefix or "",
             )
         case _:
             error = _unsupported("embedding", config)

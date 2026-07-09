@@ -19,7 +19,8 @@ CMAKE_ARGS="-DGGML_VULKAN=on" uv pip install --no-binary llama-cpp-python llama-
 ```
 
 Models are downloaded automatically from HuggingFace on first use, using the repo id and
-filename configured per role in `.env` (see `.env.example`). Each role — local generation,
+filename configured per role in `.env` (see `.env.example`). Qwen3 Embedding 0.6B uses
+last-token pooling to produce 1024-dimensional vectors. Each role — local generation,
 embeddings, runtime cloud, and the training judge — can point at any supported provider
 (`llama`, `openai`, or `fireworks`).
 
@@ -57,12 +58,12 @@ uv run gullivers-router run \
 ## Docker submission smoke test
 
 The Dockerfile builds a CPU-only `linux/amd64` image and includes the local Gemma E2B text
-GGUF, the embedding GGUF used by the router, and `artifacts/training/router.npz`.
+GGUF, the Qwen3 embedding GGUF used by the router, and `artifacts/training/router.npz`.
 
 ```sh
 docker buildx build --platform linux/amd64 --load -t gullivers-router:local .
 mkdir -p outputs
-uv run python -c "import numpy as np; np.savez('outputs/router-all-local.npz', weights=np.zeros(768, dtype=np.float64), bias=np.float64(0), alpha=np.float64(2), normalize=True)"
+uv run python -c "import numpy as np; np.savez('outputs/router-all-local.npz', weights=np.zeros(1024, dtype=np.float64), bias=np.float64(0), alpha=np.float64(2), normalize=True)"
 docker run --rm --memory=4g --cpus=2 \
   -e CLOUD_PROVIDER=llama \
   -e CLOUD_REPO_ID=google/gemma-4-E2B-it-qat-q4_0-gguf \

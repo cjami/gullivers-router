@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
 FIREWORKS_BASE_URL = "https://api.fireworks.ai/inference/v1"
+QWEN_ROUTING_PREFIX = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,6 +40,8 @@ class ModelConfig:
     max_tokens: int | None = None
     n_threads: int | None = None
     model_root: Path | None = None
+    pooling_type: str | None = None
+    input_prefix: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,6 +61,8 @@ class _RoleDefaults:
     max_tokens: int | None = None
     n_threads: int | None = None
     model_root: Path | None = None
+    pooling_type: str | None = None
+    input_prefix: str | None = None
 
 
 _ROLE_DEFAULTS: dict[str, _RoleDefaults] = {
@@ -76,9 +81,11 @@ _ROLE_DEFAULTS: dict[str, _RoleDefaults] = {
     ),
     "EMBEDDING": _RoleDefaults(
         provider=Provider.LLAMA,
-        repo_id="ggml-org/embeddinggemma-300M-GGUF",
-        filename="*Q8_0.gguf",
+        repo_id="Qwen/Qwen3-Embedding-0.6B-GGUF",
+        filename="Qwen3-Embedding-0.6B-Q8_0.gguf",
         n_ctx=2048,
+        pooling_type="last",
+        input_prefix=QWEN_ROUTING_PREFIX,
         model_root=Path("models"),
     ),
     "CLOUD": _RoleDefaults(
@@ -124,6 +131,8 @@ def _role_config(env: Mapping[str, str], role: str) -> ModelConfig:
         max_tokens=_optional_int(value("MAX_TOKENS", _string(defaults.max_tokens))),
         n_threads=_optional_int(value("N_THREADS", _string(defaults.n_threads))),
         model_root=_optional_path(value("MODEL_ROOT", _string(defaults.model_root))),
+        pooling_type=value("POOLING_TYPE", defaults.pooling_type),
+        input_prefix=value("INPUT_PREFIX", defaults.input_prefix),
     )
 
 

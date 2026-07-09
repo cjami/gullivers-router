@@ -28,11 +28,12 @@ ENV PYTHONUNBUFFERED=1 \
     LOCAL_N_THREADS=2 \
     LOCAL_MODEL_ROOT=/app/models \
     EMBEDDING_PROVIDER=llama \
-    EMBEDDING_REPO_ID=ggml-org/embeddinggemma-300M-GGUF \
-    EMBEDDING_FILENAME=*Q8_0.gguf \
+    EMBEDDING_REPO_ID=Qwen/Qwen3-Embedding-0.6B-GGUF \
+    EMBEDDING_FILENAME=Qwen3-Embedding-0.6B-Q8_0.gguf \
     EMBEDDING_N_CTX=2048 \
     EMBEDDING_N_GPU_LAYERS=0 \
     EMBEDDING_N_THREADS=2 \
+    EMBEDDING_POOLING_TYPE=last \
     EMBEDDING_MODEL_ROOT=/app/models
 
 RUN apt-get update \
@@ -43,8 +44,8 @@ WORKDIR /app
 COPY --from=builder /install /usr/local
 COPY models/google/gemma-4-E2B-it-qat-q4_0-gguf/gemma-4-E2B_q4_0-it.gguf \
     /app/models/google/gemma-4-E2B-it-qat-q4_0-gguf/gemma-4-E2B_q4_0-it.gguf
-COPY models/ggml-org/embeddinggemma-300M-GGUF/ \
-    /app/models/ggml-org/embeddinggemma-300M-GGUF/
+COPY models/Qwen/Qwen3-Embedding-0.6B-GGUF/Qwen3-Embedding-0.6B-Q8_0.gguf \
+    /app/models/Qwen/Qwen3-Embedding-0.6B-GGUF/Qwen3-Embedding-0.6B-Q8_0.gguf
 COPY artifacts/training/router.npz /app/artifacts/training/router.npz
 
 ENTRYPOINT ["gullivers-router", "run", "--input", "/input/tasks.json", "--output", "/output/results.json", "--router-weights", "/app/artifacts/training/router.npz"]

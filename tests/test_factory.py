@@ -77,6 +77,8 @@ def test_factory_passes_llama_embedder_runtime_options(tmp_path):
             n_gpu_layers=-1,
             n_threads=4,
             model_root=tmp_path,
+            pooling_type="last",
+            input_prefix="classify: ",
         )
     )
 
@@ -85,6 +87,8 @@ def test_factory_passes_llama_embedder_runtime_options(tmp_path):
     assert embedder._n_gpu_layers == -1
     assert embedder._n_threads == 4
     assert embedder._model_root == tmp_path
+    assert embedder._pooling_type == 3
+    assert embedder._input_prefix == "classify: "
 
 
 def test_build_embedding_model_rejects_cloud_provider():
@@ -329,11 +333,11 @@ def test_llama_chat_ignores_thinking_for_unsupported_template(monkeypatch):
     assert "enable_thinking" not in captured
 
 
-def test_llama_embedder_uses_local_model_before_hugging_face(monkeypatch, tmp_path):
+def test_llama_embedder_uses_qwen_pooling_and_instruction(monkeypatch, tmp_path):
     captured = {}
-    local_model = tmp_path / "ggml-org" / "embeddinggemma-300M-GGUF"
+    local_model = tmp_path / "Qwen" / "Qwen3-Embedding-0.6B-GGUF"
     local_model.mkdir(parents=True)
-    model_path = local_model / "embeddinggemma-300M-Q8_0.gguf"
+    model_path = local_model / "Qwen3-Embedding-0.6B-Q8_0.gguf"
     model_path.write_text("model", encoding="utf-8")
 
     class FakeLlama:
@@ -346,6 +350,7 @@ def test_llama_embedder_uses_local_model_before_hugging_face(monkeypatch, tmp_pa
 
         def tokenize(self, text, add_bos):
             captured["add_bos"] = add_bos
+            captured["input_text"] = text.decode()
             return [1, 2, 3]
 
         def detokenize(self, tokens):
@@ -358,10 +363,23 @@ def test_llama_embedder_uses_local_model_before_hugging_face(monkeypatch, tmp_pa
 
     monkeypatch.setitem(sys.modules, "llama_cpp", SimpleNamespace(Llama=FakeLlama))
     embedder = LlamaCppEmbedder(
-        _cfg(Provider.LLAMA, repo_id="ggml-org/embeddinggemma-300M-GGUF", filename="*Q8_0.gguf"),
+        _cfg(
+            Provider.LLAMA,
+            repo_id="Qwen/Qwen3-Embedding-0.6B-GGUF",
+            filename="Qwen3-Embedding-0.6B-Q8_0.gguf",
+        ),
         model_root=tmp_path,
+        pooling_type="last",
+        input_prefix="classify: ",
     )
 
     assert embedder.embed("hello") == [0.1, 0.2]
     assert captured["model_path"] == str(model_path)
     assert captured["embedding"] is True
+    assert captured["pooling_type"] == 3
+    assert captured["input_text"] == "classify: hello"
+
+
+def test_llama_embedder_rejects_unknown_pooling_type():
+    with pytest.raises(ValueError, match="unsupported pooling type"):
+        LlamaCppEmbedder(_cfg(Provider.LLAMA), pooling_type="mystery")
