@@ -34,6 +34,7 @@ class ModelConfig:
     n_gpu_layers: int | None = None
     flash_attn: bool | None = None
     enable_thinking: bool | None = None
+    reasoning_effort: str | None = None
     temperature: float | None = None
     top_p: float | None = None
     top_k: int | None = None
@@ -55,6 +56,7 @@ class _RoleDefaults:
     n_gpu_layers: int | None = None
     flash_attn: bool | None = None
     enable_thinking: bool | None = None
+    reasoning_effort: str | None = None
     temperature: float | None = None
     top_p: float | None = None
     top_k: int | None = None
@@ -92,7 +94,7 @@ _ROLE_DEFAULTS: dict[str, _RoleDefaults] = {
         provider=Provider.FIREWORKS,
         model="accounts/fireworks/models/minimax-m3",
         base_url=FIREWORKS_BASE_URL,
-        enable_thinking=False,
+        reasoning_effort="adaptive",
     ),
     "JUDGE": _RoleDefaults(
         provider=Provider.FIREWORKS,
@@ -114,6 +116,8 @@ def _role_config(env: Mapping[str, str], role: str) -> ModelConfig:
     if provider == Provider.FIREWORKS and env.get("FIREWORKS_BASE_URL"):
         base_url = env["FIREWORKS_BASE_URL"]
     model = _resolve_model(env, role, provider, value("MODEL", defaults.model))
+    enable_thinking = _optional_bool(value("ENABLE_THINKING", _string(defaults.enable_thinking)))
+    reasoning_effort = _role_reasoning_effort(env, role, defaults, enable_thinking)
     return ModelConfig(
         provider=provider,
         model=model,
@@ -125,7 +129,8 @@ def _role_config(env: Mapping[str, str], role: str) -> ModelConfig:
         n_ctx=_optional_int(value("N_CTX", _string(defaults.n_ctx))),
         n_gpu_layers=_optional_int(value("N_GPU_LAYERS", _string(defaults.n_gpu_layers))),
         flash_attn=_optional_bool(value("FLASH_ATTN", _string(defaults.flash_attn))),
-        enable_thinking=_optional_bool(value("ENABLE_THINKING", _string(defaults.enable_thinking))),
+        enable_thinking=enable_thinking,
+        reasoning_effort=reasoning_effort,
         temperature=_optional_float(value("TEMPERATURE", _string(defaults.temperature))),
         top_p=_optional_float(value("TOP_P", _string(defaults.top_p))),
         top_k=_optional_int(value("TOP_K", _string(defaults.top_k))),
@@ -135,6 +140,19 @@ def _role_config(env: Mapping[str, str], role: str) -> ModelConfig:
         pooling_type=value("POOLING_TYPE", defaults.pooling_type),
         input_prefix=value("INPUT_PREFIX", defaults.input_prefix),
     )
+
+
+def _role_reasoning_effort(
+    env: Mapping[str, str],
+    role: str,
+    defaults: _RoleDefaults,
+    enable_thinking: bool | None,
+) -> str | None:
+    if f"{role}_REASONING_EFFORT" in env:
+        return _optional_reasoning_effort(env[f"{role}_REASONING_EFFORT"])
+    if f"{role}_ENABLE_THINKING" in env and enable_thinking is False:
+        return None
+    return defaults.reasoning_effort
 
 
 def _resolve_model(env: Mapping[str, str], role: str, provider: Provider, configured: str | None) -> str | None:
@@ -169,6 +187,17 @@ def _optional_bool(raw: str | None) -> bool | None:
     if normalized in {"0", "false", "no", "off"}:
         return False
     msg = f"invalid boolean value: {raw}"
+    raise ValueError(msg)
+
+
+def _optional_reasoning_effort(raw: str | None) -> str | None:
+    if raw is None or raw == "":
+        return None
+    normalized = raw.strip().lower()
+    allowed = {"low", "medium", "high", "xhigh", "max", "none", "adaptive"}
+    if normalized in allowed:
+        return normalized
+    msg = f"invalid reasoning effort: {raw}"
     raise ValueError(msg)
 
 

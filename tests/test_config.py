@@ -157,11 +157,26 @@ def test_embedding_pooling_and_prefix_can_be_overridden():
     assert settings.embedding.input_prefix == "classify: "
 
 
-def test_cloud_disables_reasoning_and_judge_leaves_it_unset():
+def test_cloud_uses_adaptive_reasoning_and_judge_leaves_it_unset():
     settings = Settings.from_env({})
 
-    assert settings.cloud.enable_thinking is False
+    assert settings.cloud.reasoning_effort == "adaptive"
+    assert settings.cloud.enable_thinking is None
+    assert settings.judge.reasoning_effort is None
     assert settings.judge.enable_thinking is None
+
+
+def test_cloud_reasoning_effort_can_be_overridden():
+    settings = Settings.from_env({"CLOUD_REASONING_EFFORT": "high"})
+
+    assert settings.cloud.reasoning_effort == "high"
+
+
+def test_cloud_enable_thinking_false_overrides_default_adaptive_reasoning():
+    settings = Settings.from_env({"CLOUD_ENABLE_THINKING": "false"})
+
+    assert settings.cloud.reasoning_effort is None
+    assert settings.cloud.enable_thinking is False
 
 
 def test_invalid_bool_runtime_option_raises():

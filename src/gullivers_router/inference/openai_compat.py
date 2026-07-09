@@ -87,10 +87,14 @@ class OpenAICompatChat:
 
 
 def _reasoning_extra_body(config: ModelConfig) -> dict:
-    """Disable thinking on hybrid reasoning models; Fireworks reads ``reasoning_effort='none'``.
+    """Control thinking on hybrid reasoning models via Fireworks' ``reasoning_effort``.
 
-    Only applied when a role explicitly opts out, leaving reasoning-required models untouched.
+    Only applied when a role explicitly opts in or out, leaving other models' defaults untouched.
     """
+    if config.reasoning_effort is not None:
+        return {"reasoning_effort": config.reasoning_effort}
+    if config.enable_thinking is True:
+        return {"reasoning_effort": True}
     if config.enable_thinking is False:
         return {"reasoning_effort": "none"}
     return {}

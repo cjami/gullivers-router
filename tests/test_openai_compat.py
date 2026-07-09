@@ -71,6 +71,27 @@ def test_disabled_thinking_sends_reasoning_effort_none(monkeypatch):
     assert completions.calls[0]["extra_body"] == {"reasoning_effort": "none"}
 
 
+def test_enabled_thinking_sends_reasoning_effort_true(monkeypatch):
+    chat, completions = _chat_with_responses(monkeypatch, [_response("answer")], enable_thinking=True)
+
+    chat.complete(system_and_user_message("s", "a"))
+
+    assert completions.calls[0]["extra_body"] == {"reasoning_effort": True}
+
+
+def test_reasoning_effort_overrides_thinking_boolean(monkeypatch):
+    chat, completions = _chat_with_responses(
+        monkeypatch,
+        [_response("answer")],
+        enable_thinking=True,
+        reasoning_effort="adaptive",
+    )
+
+    chat.complete(system_and_user_message("s", "a"))
+
+    assert completions.calls[0]["extra_body"] == {"reasoning_effort": "adaptive"}
+
+
 def test_unset_thinking_leaves_reasoning_untouched(monkeypatch):
     chat, completions = _chat_with_responses(monkeypatch, [_response("answer")])
 

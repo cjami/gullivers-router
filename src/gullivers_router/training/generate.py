@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from gullivers_router.inference.base import ChatModel, Message
     from gullivers_router.training.dataset import Prompt
 
-DEFAULT_CONCURRENCY = 8
+DEFAULT_CONCURRENCY = 24
 MAX_ATTEMPTS = 6
 _BACKOFF_BASE_SECONDS = 1.0
 _BACKOFF_CAP_SECONDS = 30.0
