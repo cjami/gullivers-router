@@ -174,6 +174,20 @@ def _category_weights(path):
     )
 
 
+def _known_category_weights(path):
+    np.savez(
+        path,
+        weights=np.array([1.0]),
+        bias=np.float64(0.0),
+        alpha=np.float64(0.5),
+        normalize=True,
+        cat_weights=np.array([[-1.0], [1.0]]),
+        cat_bias=np.array([0.0, 0.0]),
+        cat_classes=np.array(["factual_knowledge", "mathematical_reasoning"]),
+        cat_alpha=np.array([0.5, 0.5]),
+    )
+
+
 def test_classify_tasks_applies_per_category_thresholds(tmp_path):
     weights_path = tmp_path / "router.npz"
     _category_weights(weights_path)
@@ -190,6 +204,39 @@ def test_classify_tasks_applies_per_category_thresholds(tmp_path):
     assert [decision.category for decision in decisions] == ["easy", "hard"]
     assert [decision.threshold for decision in decisions] == [0.9, 0.1]
     assert [decision.route for decision in decisions] == [LOCAL_ROUTE, CLOUD_ROUTE]
+
+
+def test_answer_prompts_include_category_hints(tmp_path):
+    input_path = tmp_path / "tasks.json"
+    output_path = tmp_path / "results.json"
+    weights_path = tmp_path / "router.npz"
+    _known_category_weights(weights_path)
+    input_path.write_text(
+        json.dumps(
+            [
+                {"task_id": "factual", "prompt": "local factual question"},
+                {"task_id": "math", "prompt": "cloud hard math"},
+            ]
+        ),
+        encoding="utf-8",
+    )
+    chats = {
+        Provider.LLAMA: FakeChat("local"),
+        Provider.FIREWORKS: FakeChat("cloud"),
+    }
+
+    run_with_context(
+        RuntimeOptions(input_path=input_path, output_path=output_path, router_weights=weights_path),
+        _context(chats=chats),
+    )
+
+    local_system = chats[Provider.LLAMA].calls[0][0].content
+    cloud_system = chats[Provider.FIREWORKS].calls[0][0].content
+    assert "For facts:" in local_system
+    assert "For math:" in cloud_system
+    assert "show brief calculations" in cloud_system
+    assert chats[Provider.LLAMA].calls[0][-1].content == "local factual question"
+    assert chats[Provider.FIREWORKS].calls[0][-1].content == "cloud hard math"
 
 
 def test_cloud_answers_preserve_input_order(tmp_path):

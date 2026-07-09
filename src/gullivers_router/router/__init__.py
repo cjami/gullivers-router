@@ -31,9 +31,21 @@ DEFAULT_ROUTER_WEIGHTS = Path("artifacts/training/router.npz")
 LOCAL_ROUTE = "local"
 CLOUD_ROUTE = "cloud"
 
-_CONCISE_SYSTEM_PROMPT = (
-    "Answer accurately and concisely. Give the shortest complete answer; skip preamble, restated questions, and filler."
-)
+_CONCISE_SYSTEM_PROMPT = "Answer accurately and concisely. Follow requested format constraints; skip filler."
+_CATEGORY_SYSTEM_HINTS = {
+    "code_debugging": "For debugging: identify the bug and provide corrected implementation.",
+    "code_generation": (
+        "For code: use the requested language; write a concise complete function; no examples unless asked."
+    ),
+    "factual_knowledge": "For facts: answer the requested concept, definition, or mechanism; avoid uncertain extras.",
+    "logical_reasoning": "For logic: satisfy every condition before answering.",
+    "mathematical_reasoning": "For math: show brief calculations, then the final answer.",
+    "named_entity_recognition": (
+        "For NER: scan the full text for people, organizations, locations, and date/time expressions; label each type."
+    ),
+    "sentiment_classification": "For sentiment: label positive, negative, or mixed; justify only if asked.",
+    "text_summarisation": "For summaries: preserve who does what and obey format or length constraints.",
+}
 
 __all__ = [
     "CLOUD_ROUTE",
@@ -261,14 +273,14 @@ def answer_tasks(
     with futures.ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
         cloud_futures = {
             pool.submit(
-                complete_with_retry, cloud, system_and_user_message(_CONCISE_SYSTEM_PROMPT, decision.task.prompt)
+                complete_with_retry, cloud, system_and_user_message(_system_prompt(decision), decision.task.prompt)
             ): decision.task.task_id
             for decision in cloud_decisions
         }
         for index, decision in enumerate(local_decisions, start=1):
             _log(f"[local {index}/{len(local_decisions)}] {decision.task.task_id}")
             answers[decision.task.task_id] = local.complete(
-                system_and_user_message(_CONCISE_SYSTEM_PROMPT, decision.task.prompt)
+                system_and_user_message(_system_prompt(decision), decision.task.prompt)
             )
         for completed, future in enumerate(futures.as_completed(cloud_futures), start=1):
             task_id = cloud_futures[future]
@@ -279,6 +291,13 @@ def answer_tasks(
         _log_cloud_usage(cloud)
 
     return [(decision.task.task_id, answers[decision.task.task_id]) for decision in decisions]
+
+
+def _system_prompt(decision: _Decision) -> str:
+    hint = _CATEGORY_SYSTEM_HINTS.get(decision.category or "")
+    if hint is None:
+        return _CONCISE_SYSTEM_PROMPT
+    return f"{_CONCISE_SYSTEM_PROMPT} {hint}"
 
 
 def write_results(path: Path, records: Sequence[dict[str, object]]) -> None:
