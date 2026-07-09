@@ -85,3 +85,6 @@ ignore = [
     "PLR2004", # Literal expected values keep small tests readable.
     "S101", # Pytest assertions are the standard test assertion style.
 ]
+"scripts/**/*.py" = [
+    "INP001", # Standalone maintenance scripts are run directly, not imported as a package.
+]
