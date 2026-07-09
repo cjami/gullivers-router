@@ -307,12 +307,15 @@ def _release_embedder(embedder: EmbeddingModel) -> None:
 
 
 def _log_rss(label: str) -> None:
-    """Log current resident memory on Linux; a no-op where ``/proc`` is unavailable."""
+    """Log current resident memory on Linux; a no-op where ``/proc`` or ``sysconf`` is unavailable."""
+    sysconf = getattr(os, "sysconf", None)
+    if sysconf is None:
+        return
     try:
         resident_pages = int(Path("/proc/self/statm").read_text(encoding="utf-8").split()[1])
     except (OSError, IndexError, ValueError):
         return
-    mib = resident_pages * os.sysconf("SC_PAGE_SIZE") / 1024 / 1024
+    mib = resident_pages * sysconf("SC_PAGE_SIZE") / 1024 / 1024
     _log(f"rss {label}: {mib:.0f} MiB")
 
 

@@ -79,6 +79,7 @@ def test_bundle_scores_categories_and_thresholds(tmp_path):
 
     assert np.allclose(probabilities(weights, x), risk.predict_proba(x))
     predicted = predict_categories(weights, x)
+    assert predicted is not None
     assert (predicted == category.predict(x)).all()
     thresholds = category_thresholds(weights, predicted)
     assert set(np.round(thresholds, 3).tolist()) <= {0.9, 0.2}

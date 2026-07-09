@@ -133,8 +133,8 @@ def save_bundle(
     path.parent.mkdir(parents=True, exist_ok=True)
     arrays: dict[str, np.ndarray] = {
         "weights": weights,
-        "bias": bias,
-        "alpha": np.float64(global_alpha),
+        "bias": np.array(bias, dtype=np.float64),
+        "alpha": np.array(global_alpha, dtype=np.float64),
     }
     if category is not None:
         cat_weights, cat_bias, cat_classes = category.coefficients()
@@ -144,7 +144,7 @@ def save_bundle(
         arrays["cat_alpha"] = np.array(
             [alpha_by_category.get(name, global_alpha) for name in cat_classes], dtype=np.float64
         )
-    np.savez(path, **arrays)
+    np.savez(path, **arrays)  # ty: ignore[invalid-argument-type]  # keys never collide with allow_pickle
 
 
 def load_numpy(path: Path) -> dict[str, np.ndarray]:
