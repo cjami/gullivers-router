@@ -157,11 +157,11 @@ def test_embedding_pooling_and_prefix_can_be_overridden():
     assert settings.embedding.input_prefix == "classify: "
 
 
-def test_judge_and_cloud_leave_reasoning_unset():
+def test_cloud_disables_reasoning_and_judge_leaves_it_unset():
     settings = Settings.from_env({})
 
+    assert settings.cloud.enable_thinking is False
     assert settings.judge.enable_thinking is None
-    assert settings.cloud.enable_thinking is None
 
 
 def test_invalid_bool_runtime_option_raises():
