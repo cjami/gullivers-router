@@ -33,6 +33,7 @@ Docker image overrides llama.cpp to CPU mode with `LOCAL_N_GPU_LAYERS=0`,
 | Command                        | Description                                       |
 | ------------------------------ | ------------------------------------------------- |
 | `uv run gullivers-router run`          | Run the batch router (local vs cloud).                    |
+| `uv run gullivers-router score-practice` | Score practice results against the answer set with the judge. |
 | `uv run gullivers-router train`        | Build the router training dataset (offline).              |
 | `uv run gullivers-router train-router` | Train the routing model from judge scores and embeddings. |
 
@@ -82,6 +83,23 @@ docker run --rm --memory=4g --cpus=2 \
 ```
 
 This all-local smoke test writes `outputs/results.json` without requiring Fireworks credentials.
+
+## Local practice scoring
+
+Use the included practice pack to score routing changes before submitting. First generate answers,
+then grade them with the configured `judge` role:
+
+```sh
+uv run gullivers-router run \
+  --input examples/practice_tasks.json \
+  --output outputs/results.json \
+  --router-weights artifacts/training/router.npz
+
+make score-practice
+```
+
+The report includes per-task LLM grades and a percentage score. Missing answers are counted as
+incorrect without calling the judge.
 
 ## Publishing to GHCR
 

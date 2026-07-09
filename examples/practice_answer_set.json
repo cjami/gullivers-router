@@ -1,0 +1,42 @@
+[
+  {
+    "task_id": "practice-01",
+    "answer": "The capital of Australia is Canberra. It is near Lake Burley Griffin.",
+    "notes": "Do not accept Sydney or Melbourne as the capital."
+  },
+  {
+    "task_id": "practice-02",
+    "answer": "144 items remain.",
+    "notes": "15% of 240 is 36; 240 - 36 - 60 = 144."
+  },
+  {
+    "task_id": "practice-03",
+    "answer": "Mixed sentiment.",
+    "notes": "The review is positive about battery life and negative about scratch resistance."
+  },
+  {
+    "task_id": "practice-04",
+    "answer": "A neighborhood library's weekend repair cafe helps residents fix household items and learn maintenance skills while reducing waste, saving money, and giving skilled volunteers a way to share their knowledge.",
+    "notes": "The answer must be exactly one sentence."
+  },
+  {
+    "task_id": "practice-05",
+    "answer": "Maria Sanchez: person; Fireworks AI: organization; Berlin: location; last March: date.",
+    "notes": "Accept equivalent named-entity type labels such as PERSON, ORG, GPE/LOC, and DATE."
+  },
+  {
+    "task_id": "practice-06",
+    "answer": "The function returns the first element instead of scanning the list. A correct fix is: def get_max(nums): return max(nums)",
+    "notes": "Also accept a correct loop implementation. It is fine if the answer mentions handling an empty list separately."
+  },
+  {
+    "task_id": "practice-07",
+    "answer": "Sam owns the cat.",
+    "notes": "Jo owns the dog, Sam cannot own the bird, so Lee owns the bird and Sam owns the cat."
+  },
+  {
+    "task_id": "practice-08",
+    "answer": "def second_largest(nums):\n    unique = sorted(set(nums))\n    if len(unique) < 2:\n        raise ValueError(\"need at least two distinct numbers\")\n    return unique[-2]",
+    "notes": "The solution should return the second-largest distinct value, so duplicates of the maximum do not count as the answer."
+  }
+]

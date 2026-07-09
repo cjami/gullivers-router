@@ -56,6 +56,38 @@ def test_run_defaults_flow_through_to_router(monkeypatch):
     assert call["classify_only"] is False
 
 
+def test_score_practice_dispatches_to_practice(monkeypatch):
+    calls = []
+    monkeypatch.setattr("gullivers_router.practice.score_practice", lambda **kwargs: calls.append(kwargs))
+
+    assert (
+        main(
+            [
+                "score-practice",
+                "--tasks",
+                "examples/practice_tasks.json",
+                "--results",
+                "artifacts/dev/results.json",
+                "--answer-set",
+                "examples/practice_answer_set.json",
+                "--output",
+                "artifacts/dev/practice_score.json",
+                "--workers",
+                "5",
+            ]
+        )
+        == 0
+    )
+
+    assert len(calls) == 1
+    call = calls[0]
+    assert str(call["tasks_path"]) == "examples\\practice_tasks.json"
+    assert str(call["results_path"]) == "artifacts\\dev\\results.json"
+    assert str(call["answer_set_path"]) == "examples\\practice_answer_set.json"
+    assert str(call["output_path"]) == "artifacts\\dev\\practice_score.json"
+    assert call["workers"] == 5
+
+
 def test_train_dispatches_to_training(monkeypatch):
     calls = []
     monkeypatch.setattr("gullivers_router.training.train", lambda **kwargs: calls.append(kwargs))

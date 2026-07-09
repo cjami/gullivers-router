@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from gullivers_router import __version__, router, training
+from gullivers_router import __version__, practice, router, training
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -21,6 +21,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     subparsers = parser.add_subparsers(dest="command")
     _add_run_parser(subparsers)
+    _add_score_practice_parser(subparsers)
     _add_train_parser(subparsers)
     _add_train_router_parser(subparsers)
     return parser
@@ -56,6 +57,43 @@ def _add_run_parser(subparsers: argparse._SubParsersAction) -> None:
         "--classify-only",
         action="store_true",
         help="Write route diagnostics without generating answers.",
+    )
+
+
+def _add_score_practice_parser(subparsers: argparse._SubParsersAction) -> None:
+    score_parser = subparsers.add_parser(
+        "score-practice",
+        help="Score practice task answers against the reference answer set with the judge model.",
+    )
+    score_parser.add_argument(
+        "--tasks",
+        type=Path,
+        default=practice.DEFAULT_INPUT,
+        help="Practice tasks JSON file.",
+    )
+    score_parser.add_argument(
+        "--results",
+        type=Path,
+        default=practice.DEFAULT_RESULTS,
+        help="Router results JSON file to score.",
+    )
+    score_parser.add_argument(
+        "--answer-set",
+        type=Path,
+        default=practice.DEFAULT_ANSWER_SET,
+        help="Reference answer set JSON file.",
+    )
+    score_parser.add_argument(
+        "--output",
+        type=Path,
+        default=practice.DEFAULT_SCORE_OUTPUT,
+        help="Path for the scoring report JSON.",
+    )
+    score_parser.add_argument(
+        "--workers",
+        type=int,
+        default=training.DEFAULT_CONCURRENCY,
+        help="Concurrent judge requests.",
     )
 
 
@@ -138,6 +176,14 @@ def main(argv: list[str] | None = None) -> int:
             router_weights=args.router_weights,
             workers=args.workers,
             classify_only=args.classify_only,
+        )
+    elif args.command == "score-practice":
+        practice.score_practice(
+            tasks_path=args.tasks,
+            results_path=args.results,
+            answer_set_path=args.answer_set,
+            output_path=args.output,
+            workers=args.workers,
         )
     elif args.command == "train":
         training.train(
