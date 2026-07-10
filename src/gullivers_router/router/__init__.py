@@ -38,7 +38,7 @@ _CATEGORY_SYSTEM_HINTS = {
         "For code: use the requested language; write a concise complete function; no examples unless asked."
     ),
     "factual_knowledge": "For facts: answer the requested concept, definition, or mechanism; avoid uncertain extras.",
-    "logical_reasoning": "For logic: satisfy every condition before answering.",
+    "logical_reasoning": "For logic: show brief deductions, then the final answer.",
     "mathematical_reasoning": "For math: show brief calculations, then the final answer.",
     "named_entity_recognition": (
         "For NER: scan the full text for people, organizations, locations, and date/time expressions; label each type."
