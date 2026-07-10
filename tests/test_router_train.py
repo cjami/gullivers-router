@@ -5,6 +5,7 @@ from gullivers_router.router.model import CategoryModel, RouterModel
 from gullivers_router.training import store
 from gullivers_router.training.pipeline import Artifacts
 from gullivers_router.training.router import (
+    _apply_hard_route_categories,
     _Dataset,
     _floor_distance_sample_weights,
     _load_dataset,
@@ -69,9 +70,9 @@ def test_train_router_writes_artifacts_and_metrics(tmp_path):
     assert metrics["n_train"] + metrics["n_calibration"] + metrics["n_test"] == metrics["n_total"]
     assert metrics["n_val"] == metrics["n_calibration"] + metrics["n_test"]
     assert metrics["quality_floor"] == 4.0
-    assert metrics["accuracy_gate"] == 0.85
+    assert metrics["accuracy_gate"] == 0.91
     assert metrics["target_margin"] == 0.025
-    assert metrics["target_pass_rate"] == pytest.approx(0.875)
+    assert metrics["target_pass_rate"] == pytest.approx(0.935)
     assert metrics["selected_alpha_source"] == "calibration"
     assert metrics["threshold_category_source"] == "predicted"
     assert metrics["global_operating_point"]["alpha"] == metrics["calibration_operating_point"]["alpha"]
@@ -133,6 +134,15 @@ def test_per_category_alpha_falls_back_when_too_few_rows():
     )
 
     assert alphas == {"rare": 0.42}
+
+
+def test_apply_hard_route_categories_forces_selected_thresholds():
+    alphas = _apply_hard_route_categories(
+        {"code_debugging": 0.7, "code_generation": 0.6, "math": 0.5},
+        ["code_debugging", "code_generation", "math"],
+    )
+
+    assert alphas == {"code_debugging": 0.0, "code_generation": 0.0, "math": 0.5}
 
 
 def test_runtime_categories_use_category_model_predictions(monkeypatch):

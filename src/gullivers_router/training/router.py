@@ -29,8 +29,9 @@ if TYPE_CHECKING:
 DEFAULT_VAL_FRACTION = 0.2
 DEFAULT_SEED = DEFAULT_INFERENCE_SEED
 DEFAULT_QUALITY_FLOOR = 4.0
-DEFAULT_ACCURACY_GATE = 0.85
+DEFAULT_ACCURACY_GATE = 0.91
 DEFAULT_TARGET_MARGIN = 0.025
+HARD_ROUTE_CATEGORIES = frozenset({"code_debugging", "code_generation"})
 _MIN_CATEGORY_CALIBRATION = 20
 _REGULARIZATION_GRID = (0.01, 0.1, 1.0, 10.0, 100.0)
 _CV_SPLITS = 5
@@ -267,6 +268,7 @@ def train_router(  # noqa: PLR0913 - each knob configures a distinct stage of th
         target_pass_rate,
         calibration_point.alpha,
     )
+    alpha_by_category = _apply_hard_route_categories(alpha_by_category, threshold_calibration.categories)
 
     test_risk = model.predict_proba(test.embeddings)
     test_curve = evaluate.cost_pass_curve(test_risk, test.local_scores, test.cloud_scores, quality_floor)
@@ -330,6 +332,14 @@ def _subset(data: _Dataset, idx: np.ndarray) -> _Dataset:
         sample_weights=data.sample_weights[idx],
         categories=[data.categories[i] for i in idx],
     )
+
+
+def _apply_hard_route_categories(alpha_by_category: dict[str, float], categories: list[str]) -> dict[str, float]:
+    """Force selected predicted categories to cloud for every retrained router."""
+    routed = dict(alpha_by_category)
+    for category in sorted(HARD_ROUTE_CATEGORIES & set(categories)):
+        routed[category] = 0.0
+    return routed
 
 
 def _split_indices(
