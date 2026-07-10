@@ -68,10 +68,7 @@ _CLOUD_FIRST_CATEGORIES = {
     "code_debugging",
     "code_generation",
 }
-_LOCAL_FIRST_CATEGORIES = {
-    "sentiment_classification",
-    "text_summarisation",
-}
+_LOCAL_FIRST_CATEGORIES: set[str] = set()
 _LOCAL_SELF_CHECK_SYSTEM_PROMPT = (
     "You are a strict verifier for a small local model. Given the original task and the local answer, decide "
     "whether the answer is safe to return or should be escalated to a stronger cloud model. Escalate for likely "

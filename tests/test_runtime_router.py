@@ -233,7 +233,7 @@ def _cloud_fast_category_weights(path):
     )
 
 
-def _local_first_category_weights(path):
+def _sentiment_summary_category_weights(path):
     np.savez(
         path,
         weights=np.array([1.0]),
@@ -243,7 +243,7 @@ def _local_first_category_weights(path):
         cat_weights=np.array([[-1.0], [1.0]]),
         cat_bias=np.array([0.0, 0.0]),
         cat_classes=np.array(["sentiment_classification", "text_summarisation"]),
-        cat_alpha=np.array([0.1, 0.1]),
+        cat_alpha=np.array([0.5, 0.1]),
     )
 
 
@@ -279,9 +279,9 @@ def test_classify_tasks_applies_per_category_thresholds(tmp_path):
     assert [decision.route for decision in decisions] == [LOCAL_ROUTE, CLOUD_ROUTE]
 
 
-def test_sentiment_and_summary_categories_route_local_first(tmp_path):
+def test_sentiment_and_summary_categories_use_threshold_routing(tmp_path):
     weights_path = tmp_path / "router.npz"
-    _local_first_category_weights(weights_path)
+    _sentiment_summary_category_weights(weights_path)
     weights = dict(np.load(weights_path))
 
     decisions = classify_tasks(
@@ -293,8 +293,8 @@ def test_sentiment_and_summary_categories_route_local_first(tmp_path):
     )
 
     assert [decision.category for decision in decisions] == ["sentiment_classification", "text_summarisation"]
-    assert [decision.route for decision in decisions] == [LOCAL_ROUTE, LOCAL_ROUTE]
-    assert [decision.model for decision in decisions] == ["local-model", "local-model"]
+    assert [decision.route for decision in decisions] == [LOCAL_ROUTE, CLOUD_ROUTE]
+    assert [decision.model for decision in decisions] == ["local-model", "cloud-model"]
 
 
 def test_code_categories_route_cloud_first(tmp_path):
@@ -443,7 +443,7 @@ def test_answer_prompts_include_category_hints(tmp_path):
     input_path = tmp_path / "tasks.json"
     output_path = tmp_path / "results.json"
     weights_path = tmp_path / "router.npz"
-    _local_first_category_weights(weights_path)
+    _sentiment_summary_category_weights(weights_path)
     input_path.write_text(
         json.dumps(
             [
@@ -464,7 +464,7 @@ def test_answer_prompts_include_category_hints(tmp_path):
     )
 
     sentiment_system = chats[Provider.LLAMA].calls[0][0].content
-    summary_system = chats[Provider.LLAMA].calls[1][0].content
+    summary_system = chats[Provider.FIREWORKS].calls[0][0].content
     assert (
         sentiment_system == "Answer correctly in the fewest words. Obey format; no filler. "
         "Label positive, negative, or mixed; justify only if asked."
@@ -476,7 +476,7 @@ def test_answer_prompts_include_category_hints(tmp_path):
     assert "For " not in sentiment_system
     assert "For " not in summary_system
     assert chats[Provider.LLAMA].calls[0][-1].content == "local sentiment question"
-    assert chats[Provider.LLAMA].calls[1][-1].content == "cloud summary"
+    assert chats[Provider.FIREWORKS].calls[0][-1].content == "cloud summary"
 
 
 def test_all_known_cloud_categories_disable_thinking(tmp_path):
