@@ -63,6 +63,7 @@ class OpenAICompatChat:
             model=self._config.model,
             messages=[m.as_dict() for m in messages],
             seed=DEFAULT_INFERENCE_SEED,
+            **_sampling_kwargs(self._config),
             extra_body=self._extra_body,
         )
         self._record_usage(response)
@@ -79,6 +80,7 @@ class OpenAICompatChat:
             messages=[m.as_dict() for m in messages],
             seed=DEFAULT_INFERENCE_SEED,
             response_format=openai_json_schema_response_format(response_model),
+            **_sampling_kwargs(self._config),
             extra_body=self._extra_body,
         )
         self._record_usage(response)
@@ -98,6 +100,15 @@ def _reasoning_extra_body(config: ModelConfig) -> dict:
     if config.enable_thinking is False:
         return {"reasoning_effort": "none"}
     return {}
+
+
+def _sampling_kwargs(config: ModelConfig) -> dict[str, float]:
+    kwargs = {}
+    if config.temperature is not None:
+        kwargs["temperature"] = config.temperature
+    if config.top_p is not None:
+        kwargs["top_p"] = config.top_p
+    return kwargs
 
 
 def _completion_content(response) -> str:  # noqa: ANN001 - OpenAI-compatible clients return provider objects.

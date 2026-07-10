@@ -433,7 +433,7 @@ def test_easy_cloud_categories_disable_thinking(tmp_path):
         built.append(config)
         if config.provider == Provider.LLAMA:
             return chats["local"]
-        if config.enable_thinking is False and config.reasoning_effort is None:
+        if config.enable_thinking is False and config.reasoning_effort is None and config.temperature == 0.0:
             return chats["fast"]
         return chats["regular"]
 
@@ -447,9 +447,9 @@ def test_easy_cloud_categories_disable_thinking(tmp_path):
         {"task_id": "regular", "answer": "regular: local hard math"},
     ]
     cloud_configs = [config for config in built if config.provider == Provider.FIREWORKS]
-    assert [(config.enable_thinking, config.reasoning_effort) for config in cloud_configs] == [
-        (None, None),
-        (False, None),
+    assert [(config.enable_thinking, config.reasoning_effort, config.temperature) for config in cloud_configs] == [
+        (None, None, None),
+        (False, None, 0.0),
     ]
 
 

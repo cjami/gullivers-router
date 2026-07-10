@@ -459,7 +459,7 @@ def _task_context(decision: _Decision) -> str:
 
 
 def _fast_cloud_config(config: ModelConfig) -> ModelConfig:
-    return replace(config, enable_thinking=False, reasoning_effort=None)
+    return replace(config, enable_thinking=False, reasoning_effort=None, temperature=0.0)
 
 
 def _system_prompt(decision: _Decision) -> str:

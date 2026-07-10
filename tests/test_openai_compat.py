@@ -1,8 +1,14 @@
 from types import SimpleNamespace
 
+from pydantic import BaseModel
+
 from gullivers_router.config import ModelConfig
 from gullivers_router.inference.base import Provider, Role, system_and_user_message
 from gullivers_router.inference.openai_compat import OpenAICompatChat
+
+
+class StructuredReply(BaseModel):
+    answer: str
 
 
 def _response(content, usage=None):
@@ -98,3 +104,20 @@ def test_unset_thinking_leaves_reasoning_untouched(monkeypatch):
     chat.complete(system_and_user_message("s", "a"))
 
     assert completions.calls[0]["extra_body"] == {}
+
+
+def test_complete_sends_configured_sampling(monkeypatch):
+    chat, completions = _chat_with_responses(monkeypatch, [_response("answer")], temperature=0.0, top_p=0.8)
+
+    chat.complete(system_and_user_message("s", "a"))
+
+    assert completions.calls[0]["temperature"] == 0.0
+    assert completions.calls[0]["top_p"] == 0.8
+
+
+def test_structured_complete_sends_configured_sampling(monkeypatch):
+    chat, completions = _chat_with_responses(monkeypatch, [_response('{"answer": "ok"}')], temperature=0.0)
+
+    chat.complete_structured(system_and_user_message("s", "a"), StructuredReply)
+
+    assert completions.calls[0]["temperature"] == 0.0
