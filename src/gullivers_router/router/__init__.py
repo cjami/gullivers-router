@@ -36,20 +36,16 @@ LOCAL_ROUTE = "local"
 CLOUD_ROUTE = "cloud"
 DETERMINISTIC_MATH_ROUTE = "deterministic_math"
 
-_CONCISE_SYSTEM_PROMPT = "Answer accurately and concisely. Follow requested format constraints; skip filler."
+_CONCISE_SYSTEM_PROMPT = "Answer correctly in the fewest words. Obey format; no filler."
 _CATEGORY_SYSTEM_HINTS = {
-    "code_debugging": "For debugging: identify the bug and provide corrected implementation.",
-    "code_generation": (
-        "For code: use the requested language; write a concise complete function; no examples unless asked."
-    ),
-    "factual_knowledge": "For facts: answer the requested concept, definition, or mechanism; avoid uncertain extras.",
-    "logical_reasoning": "For logic: show brief deductions, then the final answer.",
-    "mathematical_reasoning": "For math: show brief calculations, then the final answer.",
-    "named_entity_recognition": (
-        "For NER: scan the full text for people, organizations, locations, and date/time expressions; label each type."
-    ),
-    "sentiment_classification": "For sentiment: label positive, negative, or mixed; justify only if asked.",
-    "text_summarisation": "For summaries: preserve who does what and obey format or length constraints.",
+    "code_debugging": "Identify bug; provide corrected implementation only.",
+    "code_generation": "Use requested language; complete function only; no examples unless asked.",
+    "factual_knowledge": "Answer only the requested fact, concept, or mechanism.",
+    "logical_reasoning": "Give only necessary deductions and final answer.",
+    "mathematical_reasoning": "Give only necessary calculation and final answer.",
+    "named_entity_recognition": "Find people, organizations, locations, dates/times; label type.",
+    "sentiment_classification": "Label positive, negative, or mixed; justify only if asked.",
+    "text_summarisation": "Preserve who does what; obey length/format.",
 }
 _FAST_CLOUD_CATEGORIES = {
     "code_debugging",

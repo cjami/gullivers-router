@@ -443,12 +443,12 @@ def test_answer_prompts_include_category_hints(tmp_path):
     input_path = tmp_path / "tasks.json"
     output_path = tmp_path / "results.json"
     weights_path = tmp_path / "router.npz"
-    _known_category_weights(weights_path)
+    _local_first_category_weights(weights_path)
     input_path.write_text(
         json.dumps(
             [
-                {"task_id": "factual", "prompt": "local factual question"},
-                {"task_id": "math", "prompt": "cloud hard math"},
+                {"task_id": "sentiment", "prompt": "local sentiment question"},
+                {"task_id": "summary", "prompt": "cloud summary"},
             ]
         ),
         encoding="utf-8",
@@ -463,13 +463,20 @@ def test_answer_prompts_include_category_hints(tmp_path):
         _context(chats=chats),
     )
 
-    local_system = chats[Provider.LLAMA].calls[0][0].content
-    cloud_system = chats[Provider.FIREWORKS].calls[0][0].content
-    assert "For facts:" in local_system
-    assert "For math:" in cloud_system
-    assert "show brief calculations" in cloud_system
-    assert chats[Provider.LLAMA].calls[0][-1].content == "local factual question"
-    assert chats[Provider.FIREWORKS].calls[0][-1].content == "cloud hard math"
+    sentiment_system = chats[Provider.LLAMA].calls[0][0].content
+    summary_system = chats[Provider.LLAMA].calls[1][0].content
+    assert (
+        sentiment_system == "Answer correctly in the fewest words. Obey format; no filler. "
+        "Label positive, negative, or mixed; justify only if asked."
+    )
+    assert (
+        summary_system == "Answer correctly in the fewest words. Obey format; no filler. "
+        "Preserve who does what; obey length/format."
+    )
+    assert "For " not in sentiment_system
+    assert "For " not in summary_system
+    assert chats[Provider.LLAMA].calls[0][-1].content == "local sentiment question"
+    assert chats[Provider.LLAMA].calls[1][-1].content == "cloud summary"
 
 
 def test_all_known_cloud_categories_disable_thinking(tmp_path):
@@ -594,6 +601,7 @@ def test_local_and_cloud_calls_prepend_concise_system_prompt(tmp_path):
     local_messages = chats[Provider.LLAMA].calls[0]
     assert local_messages[0].role == Role.SYSTEM
     assert local_messages[0].content == cloud_messages[0].content
+    assert local_messages[0].content == "Answer correctly in the fewest words. Obey format; no filler."
     assert local_messages[-1].role == Role.USER
     assert local_messages[-1].content == "local factual question"
 
