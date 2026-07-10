@@ -146,7 +146,7 @@ def test_apply_hard_route_categories_forces_selected_thresholds():
         "code_debugging": 0.0,
         "code_generation": 0.0,
         "math": 0.5,
-        "named_entity_recognition": 0.0,
+        "named_entity_recognition": 0.4,
     }
 
 

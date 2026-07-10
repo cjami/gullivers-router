@@ -52,7 +52,11 @@ _CATEGORY_SYSTEM_HINTS = {
     "text_summarisation": "For summaries: preserve who does what and obey format or length constraints.",
 }
 _FAST_CLOUD_CATEGORIES = {
+    "code_debugging",
+    "code_generation",
     "factual_knowledge",
+    "logical_reasoning",
+    "mathematical_reasoning",
     "named_entity_recognition",
     "sentiment_classification",
     "text_summarisation",
@@ -405,16 +409,12 @@ def answer_tasks(  # noqa: PLR0913 - answer orchestration wires distinct runtime
 
 
 def _cloud_model(decision: _Decision, cloud: ChatModel | None, cloud_fast: ChatModel | None) -> ChatModel:
+    if cloud_fast is not None and _uses_fast_cloud_category(decision):
+        return cloud_fast
     if cloud is None:
         msg = "cloud model is required for cloud-routed tasks"
         raise RuntimeError(msg)
-    if cloud_fast is not None and _uses_fast_cloud_category(decision):
-        return cloud_fast
     return cloud
-
-
-def _uses_fast_cloud(decision: _Decision) -> bool:
-    return decision.route == CLOUD_ROUTE and _uses_fast_cloud_category(decision)
 
 
 def _uses_fast_cloud_category(decision: _Decision) -> bool:

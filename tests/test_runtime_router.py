@@ -408,7 +408,7 @@ def test_answer_prompts_include_category_hints(tmp_path):
     assert chats[Provider.FIREWORKS].calls[0][-1].content == "cloud hard math"
 
 
-def test_easy_cloud_categories_disable_thinking(tmp_path):
+def test_all_known_cloud_categories_disable_thinking(tmp_path):
     input_path = tmp_path / "tasks.json"
     output_path = tmp_path / "results.json"
     weights_path = tmp_path / "router.npz"
@@ -444,7 +444,7 @@ def test_easy_cloud_categories_disable_thinking(tmp_path):
 
     assert json.loads(output_path.read_text(encoding="utf-8")) == [
         {"task_id": "fast", "answer": "fast: cloud factual question"},
-        {"task_id": "regular", "answer": "regular: local hard math"},
+        {"task_id": "regular", "answer": "fast: local hard math"},
     ]
     cloud_configs = [config for config in built if config.provider == Provider.FIREWORKS]
     assert [(config.enable_thinking, config.reasoning_effort, config.temperature) for config in cloud_configs] == [
