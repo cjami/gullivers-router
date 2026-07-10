@@ -5,7 +5,6 @@ from gullivers_router.router.model import CategoryModel, RouterModel
 from gullivers_router.training import store
 from gullivers_router.training.pipeline import Artifacts
 from gullivers_router.training.router import (
-    _apply_hard_route_categories,
     _Dataset,
     _floor_distance_sample_weights,
     _load_dataset,
@@ -134,20 +133,6 @@ def test_per_category_alpha_falls_back_when_too_few_rows():
     )
 
     assert alphas == {"rare": 0.42}
-
-
-def test_apply_hard_route_categories_forces_selected_thresholds():
-    alphas = _apply_hard_route_categories(
-        {"code_debugging": 0.7, "code_generation": 0.6, "math": 0.5, "named_entity_recognition": 0.4},
-        ["code_debugging", "code_generation", "math", "named_entity_recognition"],
-    )
-
-    assert alphas == {
-        "code_debugging": 0.0,
-        "code_generation": 0.0,
-        "math": 0.5,
-        "named_entity_recognition": 0.4,
-    }
 
 
 def test_runtime_categories_use_category_model_predictions(monkeypatch):

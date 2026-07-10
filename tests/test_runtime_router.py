@@ -233,6 +233,34 @@ def _cloud_fast_category_weights(path):
     )
 
 
+def _local_first_category_weights(path):
+    np.savez(
+        path,
+        weights=np.array([1.0]),
+        bias=np.float64(0.0),
+        alpha=np.float64(0.1),
+        normalize=True,
+        cat_weights=np.array([[-1.0], [1.0]]),
+        cat_bias=np.array([0.0, 0.0]),
+        cat_classes=np.array(["sentiment_classification", "text_summarisation"]),
+        cat_alpha=np.array([0.1, 0.1]),
+    )
+
+
+def _cloud_first_category_weights(path):
+    np.savez(
+        path,
+        weights=np.array([-1.0]),
+        bias=np.float64(0.0),
+        alpha=np.float64(0.9),
+        normalize=True,
+        cat_weights=np.array([[-1.0], [1.0]]),
+        cat_bias=np.array([0.0, 0.0]),
+        cat_classes=np.array(["code_debugging", "code_generation"]),
+        cat_alpha=np.array([0.9, 0.9]),
+    )
+
+
 def test_classify_tasks_applies_per_category_thresholds(tmp_path):
     weights_path = tmp_path / "router.npz"
     _category_weights(weights_path)
@@ -249,6 +277,42 @@ def test_classify_tasks_applies_per_category_thresholds(tmp_path):
     assert [decision.category for decision in decisions] == ["easy", "hard"]
     assert [decision.threshold for decision in decisions] == [0.9, 0.1]
     assert [decision.route for decision in decisions] == [LOCAL_ROUTE, CLOUD_ROUTE]
+
+
+def test_sentiment_and_summary_categories_route_local_first(tmp_path):
+    weights_path = tmp_path / "router.npz"
+    _local_first_category_weights(weights_path)
+    weights = dict(np.load(weights_path))
+
+    decisions = classify_tasks(
+        [Task(task_id="sentiment", prompt="local sentiment"), Task(task_id="summary", prompt="cloud summary")],
+        FakeEmbedder(),
+        weights,
+        local_model="local-model",
+        cloud_model="cloud-model",
+    )
+
+    assert [decision.category for decision in decisions] == ["sentiment_classification", "text_summarisation"]
+    assert [decision.route for decision in decisions] == [LOCAL_ROUTE, LOCAL_ROUTE]
+    assert [decision.model for decision in decisions] == ["local-model", "local-model"]
+
+
+def test_code_categories_route_cloud_first(tmp_path):
+    weights_path = tmp_path / "router.npz"
+    _cloud_first_category_weights(weights_path)
+    weights = dict(np.load(weights_path))
+
+    decisions = classify_tasks(
+        [Task(task_id="debug", prompt="local debug"), Task(task_id="generate", prompt="cloud generate")],
+        FakeEmbedder(),
+        weights,
+        local_model="local-model",
+        cloud_model="cloud-model",
+    )
+
+    assert [decision.category for decision in decisions] == ["code_debugging", "code_generation"]
+    assert [decision.route for decision in decisions] == [CLOUD_ROUTE, CLOUD_ROUTE]
+    assert [decision.model for decision in decisions] == ["cloud-model", "cloud-model"]
 
 
 def test_predicted_math_expression_routes_to_deterministic_answer(tmp_path):

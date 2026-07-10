@@ -68,6 +68,14 @@ _CASCADE_CATEGORIES = {
     "logical_reasoning",
     "mathematical_reasoning",
 }
+_CLOUD_FIRST_CATEGORIES = {
+    "code_debugging",
+    "code_generation",
+}
+_LOCAL_FIRST_CATEGORIES = {
+    "sentiment_classification",
+    "text_summarisation",
+}
 _LOCAL_SELF_CHECK_SYSTEM_PROMPT = (
     "You are a strict verifier for a small local model. Given the original task and the local answer, decide "
     "whether the answer is safe to return or should be escalated to a stronger cloud model. Escalate for likely "
@@ -274,6 +282,12 @@ def classify_tasks(
         if answer is not None:
             route = DETERMINISTIC_MATH_ROUTE
             model = DETERMINISTIC_MATH_ROUTE
+        elif category in _CLOUD_FIRST_CATEGORIES:
+            route = CLOUD_ROUTE
+            model = cloud_model
+        elif category in _LOCAL_FIRST_CATEGORIES:
+            route = LOCAL_ROUTE
+            model = local_model
         _log(f"[classify] {task.task_id}: risk={float(risk):.3f} thr={threshold:.3f} {category} -> {route} ({model})")
         decisions.append(
             _Decision(
