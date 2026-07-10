@@ -25,7 +25,7 @@ def test_build_chat_model_local():
 
     assert isinstance(chat, LlamaCppChat)
     assert chat._enable_thinking is False
-    assert chat._temperature == 1.0
+    assert chat._temperature == 0.0
     assert chat._top_p == 0.95
     assert chat._top_k == 64
 
@@ -165,7 +165,7 @@ def test_llama_chat_loads_with_global_seed(monkeypatch):
 
     assert chat.complete([Message(Role.USER, "hello")]) == "ok"
     assert captured["seed"] == DEFAULT_INFERENCE_SEED
-    assert captured["temperature"] == 1.0
+    assert captured["temperature"] == 0.0
     assert captured["top_p"] == 0.95
     assert captured["top_k"] == 64
 
@@ -221,7 +221,7 @@ def test_llama_chat_sends_schema_response_format(monkeypatch):
     assert captured["seed"] == DEFAULT_INFERENCE_SEED
     assert captured["response_format"]["type"] == "json_object"
     assert captured["response_format"]["schema"]["properties"]["answer"]["type"] == "string"
-    assert captured["temperature"] == 1.0
+    assert captured["temperature"] == 0.0
     assert captured["top_p"] == 0.95
     assert captured["top_k"] == 64
 
@@ -305,7 +305,7 @@ def test_llama_chat_enables_thinking_for_compatible_template(monkeypatch):
 
     assert chat.complete([Message(Role.USER, "hello")]) == "thinking"
     assert captured["enable_thinking"] is True
-    assert captured["temperature"] == 1.0
+    assert captured["temperature"] == 0.0
     assert captured["top_p"] == 0.95
     assert captured["top_k"] == 64
     assert captured["llama"] is chat._model
