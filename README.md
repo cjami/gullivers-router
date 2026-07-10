@@ -56,6 +56,16 @@ uv run gullivers-router run \
   --classify-only
 ```
 
+To let borderline local routes verify the local answer before accepting it:
+
+```sh
+uv run gullivers-router run \
+  --input examples/practice_tasks.json \
+  --output outputs/results.json \
+  --router-weights artifacts/training/router.npz \
+  --local-cascade
+```
+
 ## Docker submission smoke test
 
 The Dockerfile builds a CPU-only `linux/amd64` image and includes the local Gemma E2B text

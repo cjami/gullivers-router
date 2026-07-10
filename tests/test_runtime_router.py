@@ -38,6 +38,22 @@ class FakeChat:
         return f"{self.prefix}: {prompt}"
 
 
+class FakeCascadeChat(FakeChat):
+    def __init__(self, prefix, *, should_escalate=False):
+        super().__init__(prefix)
+        self.should_escalate = should_escalate
+        self.structured_calls = []
+
+    def complete_structured(self, messages, response_model):
+        self.structured_calls.append(list(messages))
+        return response_model(
+            should_escalate=self.should_escalate,
+            confidence=0.9,
+            failure_mode="reasoning_uncertain" if self.should_escalate else "none",
+            rationale="test",
+        )
+
+
 def _settings():
     return Settings(
         hf_token=None,
@@ -304,6 +320,59 @@ def test_all_deterministic_answers_skip_chat_models(tmp_path):
     )
 
     assert json.loads(output_path.read_text(encoding="utf-8")) == [{"task_id": "math", "answer": "26"}]
+
+
+def test_local_cascade_accepts_local_answer_when_self_check_passes(tmp_path):
+    input_path = tmp_path / "tasks.json"
+    output_path = tmp_path / "results.json"
+    weights_path = tmp_path / "router.npz"
+    _always_math_weights(weights_path)
+    input_path.write_text(json.dumps([{"task_id": "a", "prompt": "local proof question"}]), encoding="utf-8")
+    local = FakeCascadeChat("local", should_escalate=False)
+    cloud = FakeChat("cloud")
+
+    run_with_context(
+        RuntimeOptions(
+            input_path=input_path,
+            output_path=output_path,
+            router_weights=weights_path,
+            local_cascade=True,
+        ),
+        _context(chats={Provider.LLAMA: local, Provider.FIREWORKS: cloud}),
+    )
+
+    assert json.loads(output_path.read_text(encoding="utf-8")) == [
+        {"task_id": "a", "answer": "local: local proof question"}
+    ]
+    assert len(local.structured_calls) == 1
+    assert len(local.calls) == 1
+    assert cloud.calls == []
+
+
+def test_local_cascade_self_check_can_escalate_after_local_answer(tmp_path):
+    input_path = tmp_path / "tasks.json"
+    output_path = tmp_path / "results.json"
+    weights_path = tmp_path / "router.npz"
+    _always_math_weights(weights_path)
+    input_path.write_text(json.dumps([{"task_id": "a", "prompt": "local proof question"}]), encoding="utf-8")
+    local = FakeCascadeChat("local", should_escalate=True)
+    cloud = FakeChat("cloud")
+
+    run_with_context(
+        RuntimeOptions(
+            input_path=input_path,
+            output_path=output_path,
+            router_weights=weights_path,
+            local_cascade=True,
+        ),
+        _context(chats={Provider.LLAMA: local, Provider.FIREWORKS: cloud}),
+    )
+
+    assert json.loads(output_path.read_text(encoding="utf-8")) == [
+        {"task_id": "a", "answer": "cloud: local proof question"}
+    ]
+    assert len(local.structured_calls) == 1
+    assert len(local.calls) == 1
 
 
 def test_answer_prompts_include_category_hints(tmp_path):

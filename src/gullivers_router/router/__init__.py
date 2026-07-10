@@ -9,16 +9,18 @@ import sys
 from concurrent import futures
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
+from pydantic import BaseModel, Field
 
 from gullivers_router.config import Settings
-from gullivers_router.inference.base import Closeable, UsageReporting, system_and_user_message
+from gullivers_router.inference.base import Closeable, Message, Role, UsageReporting, system_and_user_message
 from gullivers_router.inference.factory import build_chat_model, build_embedding_model
+from gullivers_router.inference.structured import complete_structured
 from gullivers_router.router.deterministic_math import deterministic_math_answer
 from gullivers_router.router.model import category_thresholds, load_numpy, predict_categories, probabilities
-from gullivers_router.training.generate import DEFAULT_CONCURRENCY, complete_with_retry
+from gullivers_router.training.generate import DEFAULT_CONCURRENCY, call_with_retry, complete_with_retry
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -29,6 +31,7 @@ if TYPE_CHECKING:
 DEFAULT_INPUT = Path("examples/practice_tasks.json")
 DEFAULT_OUTPUT = Path("outputs/results.json")
 DEFAULT_ROUTER_WEIGHTS = Path("artifacts/training/router.npz")
+DEFAULT_CASCADE_MARGIN = 0.10
 LOCAL_ROUTE = "local"
 CLOUD_ROUTE = "cloud"
 DETERMINISTIC_MATH_ROUTE = "deterministic_math"
@@ -54,6 +57,19 @@ _FAST_CLOUD_CATEGORIES = {
     "sentiment_classification",
     "text_summarisation",
 }
+_CASCADE_CATEGORIES = {
+    "code_debugging",
+    "code_generation",
+    "factual_knowledge",
+    "logical_reasoning",
+    "mathematical_reasoning",
+}
+_LOCAL_SELF_CHECK_SYSTEM_PROMPT = (
+    "You are a strict verifier for a small local model. Given the original task and the local answer, decide "
+    "whether the answer is safe to return or should be escalated to a stronger cloud model. Escalate for likely "
+    "factual errors, unsupported claims, missed constraints, flawed reasoning, code risks, or format failures. "
+    "Do not revise the answer."
+)
 
 __all__ = [
     "CLOUD_ROUTE",
@@ -98,6 +114,8 @@ class RuntimeOptions:
     router_weights: Path = DEFAULT_ROUTER_WEIGHTS
     workers: int = DEFAULT_CONCURRENCY
     classify_only: bool = False
+    local_cascade: bool = False
+    cascade_margin: float = DEFAULT_CASCADE_MARGIN
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,13 +127,15 @@ class RuntimeContext:
     embedding_factory: Callable[[ModelConfig], EmbeddingModel]
 
 
-def run(
+def run(  # noqa: PLR0913 - CLI options are passed through explicitly.
     *,
     input_path: Path = DEFAULT_INPUT,
     output_path: Path = DEFAULT_OUTPUT,
     router_weights: Path = DEFAULT_ROUTER_WEIGHTS,
     workers: int = DEFAULT_CONCURRENCY,
     classify_only: bool = False,
+    local_cascade: bool = False,
+    cascade_margin: float = DEFAULT_CASCADE_MARGIN,
 ) -> None:
     """Run the batch router."""
     run_with_context(
@@ -125,6 +145,8 @@ def run(
             router_weights=router_weights,
             workers=workers,
             classify_only=classify_only,
+            local_cascade=local_cascade,
+            cascade_margin=cascade_margin,
         ),
         RuntimeContext(
             settings=Settings.from_env(),
@@ -162,14 +184,30 @@ def run_with_context(options: RuntimeOptions, context: RuntimeContext) -> None:
 
     needs_local = any(decision.route == LOCAL_ROUTE for decision in decisions)
     needs_cloud = any(decision.route == CLOUD_ROUTE for decision in decisions)
+    cascade_candidates = [decision for decision in decisions if _uses_local_cascade(decision, options.cascade_margin)]
+    needs_cascade_cloud = options.local_cascade and bool(cascade_candidates)
+    fast_cloud_candidates = [
+        decision
+        for decision in decisions
+        if decision.route == CLOUD_ROUTE or (options.local_cascade and decision in cascade_candidates)
+    ]
     local = context.chat_factory(context.settings.local) if needs_local else None
-    cloud = context.chat_factory(context.settings.cloud) if needs_cloud else None
+    cloud = context.chat_factory(context.settings.cloud) if needs_cloud or needs_cascade_cloud else None
     cloud_fast = (
         context.chat_factory(_fast_cloud_config(context.settings.cloud))
-        if needs_cloud and any(_uses_fast_cloud(decision) for decision in decisions)
+        if (needs_cloud or needs_cascade_cloud)
+        and any(_uses_fast_cloud_category(decision) for decision in fast_cloud_candidates)
         else None
     )
-    answers = answer_tasks(decisions, local, cloud, cloud_fast=cloud_fast, workers=options.workers)
+    answers = answer_tasks(
+        decisions,
+        local,
+        cloud,
+        cloud_fast=cloud_fast,
+        workers=options.workers,
+        local_cascade=options.local_cascade,
+        cascade_margin=options.cascade_margin,
+    )
     _log_rss("after answering")
     _log(f"writing {len(answers)} answers -> {options.output_path}")
     write_results(options.output_path, [{"task_id": task_id, "answer": answer} for task_id, answer in answers])
@@ -278,13 +316,32 @@ def classification_record(decision: _Decision) -> dict[str, object]:
     return record
 
 
-def answer_tasks(
+type _CascadeFailureMode = Literal[
+    "none",
+    "missing_information",
+    "reasoning_uncertain",
+    "format_risk",
+    "factual_uncertain",
+    "math_or_code_risk",
+]
+
+
+class _LocalSelfCheck(BaseModel):
+    should_escalate: bool
+    confidence: float = Field(ge=0.0, le=1.0)
+    failure_mode: _CascadeFailureMode
+    rationale: str
+
+
+def answer_tasks(  # noqa: PLR0913 - answer orchestration wires distinct runtime dependencies.
     decisions: Sequence[_Decision],
     local: ChatModel | None,
     cloud: ChatModel | None,
     *,
     cloud_fast: ChatModel | None = None,
     workers: int,
+    local_cascade: bool = False,
+    cascade_margin: float = DEFAULT_CASCADE_MARGIN,
 ) -> list[tuple[str, str]]:
     """Generate answers for routed tasks, preserving input order.
 
@@ -296,8 +353,10 @@ def answer_tasks(
     local_decisions = [decision for decision in decisions if decision.route == LOCAL_ROUTE]
     cloud_decisions = [decision for decision in decisions if decision.route == CLOUD_ROUTE]
     direct_decisions = [decision for decision in decisions if decision.route == DETERMINISTIC_MATH_ROUTE]
+    cascade_count = sum(1 for decision in local_decisions if _uses_local_cascade(decision, cascade_margin))
+    cascade_label = f", {cascade_count} cascade-eligible" if local_cascade else ""
     _log(
-        f"answering {len(local_decisions)} local (sequential), {len(cloud_decisions)} cloud "
+        f"answering {len(local_decisions)} local (sequential{cascade_label}), {len(cloud_decisions)} cloud "
         f"({workers} workers), {len(direct_decisions)} deterministic"
     )
 
@@ -316,15 +375,30 @@ def answer_tasks(
             if local is None:
                 msg = "local model is required for local-routed tasks"
                 raise RuntimeError(msg)
-            answers[decision.task.task_id] = local.complete(
-                system_and_user_message(_system_prompt(decision), decision.task.prompt)
-            )
+            local_answer = local.complete(system_and_user_message(_system_prompt(decision), decision.task.prompt))
+            if (
+                local_cascade
+                and _uses_local_cascade(decision, cascade_margin)
+                and _should_escalate_local_answer(decision, local_answer, local)
+            ):
+                _log(f"[cascade] {decision.task.task_id}: self-check escalated to cloud")
+                cloud_futures[
+                    pool.submit(
+                        complete_with_retry,
+                        _cloud_model(decision, cloud, cloud_fast),
+                        system_and_user_message(_system_prompt(decision), decision.task.prompt),
+                    )
+                ] = decision.task.task_id
+                continue
+            answers[decision.task.task_id] = local_answer
+
+        total_cloud = len(cloud_futures)
         for completed, future in enumerate(futures.as_completed(cloud_futures), start=1):
             task_id = cloud_futures[future]
             answers[task_id] = future.result()
-            _log(f"[cloud {completed}/{len(cloud_decisions)}] {task_id} done")
+            _log(f"[cloud {completed}/{total_cloud}] {task_id} done")
 
-    if cloud_decisions and cloud is not None:
+    if cloud_futures and cloud is not None:
         _log_cloud_usage(cloud)
 
     return [(decision.task.task_id, answers[decision.task.task_id]) for decision in decisions]
@@ -334,13 +408,54 @@ def _cloud_model(decision: _Decision, cloud: ChatModel | None, cloud_fast: ChatM
     if cloud is None:
         msg = "cloud model is required for cloud-routed tasks"
         raise RuntimeError(msg)
-    if cloud_fast is not None and _uses_fast_cloud(decision):
+    if cloud_fast is not None and _uses_fast_cloud_category(decision):
         return cloud_fast
     return cloud
 
 
 def _uses_fast_cloud(decision: _Decision) -> bool:
-    return decision.route == CLOUD_ROUTE and decision.category in _FAST_CLOUD_CATEGORIES
+    return decision.route == CLOUD_ROUTE and _uses_fast_cloud_category(decision)
+
+
+def _uses_fast_cloud_category(decision: _Decision) -> bool:
+    return decision.category in _FAST_CLOUD_CATEGORIES
+
+
+def _uses_local_cascade(decision: _Decision, margin: float) -> bool:
+    if decision.route != LOCAL_ROUTE:
+        return False
+    return decision.category in _CASCADE_CATEGORIES or decision.risk >= decision.threshold - margin
+
+
+def _should_escalate_local_answer(decision: _Decision, answer: str, local: ChatModel) -> bool:
+    try:
+        result = call_with_retry(
+            lambda: complete_structured(local, _self_check_messages(decision, answer), _LocalSelfCheck)
+        )
+    except Exception as error:  # noqa: BLE001 - a failed confidence check should fail closed.
+        _log(f"[cascade] {decision.task.task_id}: self-check failed ({error}); escalating")
+        return True
+    _log(
+        f"[cascade] {decision.task.task_id}: self-check escalate={result.should_escalate} "
+        f"confidence={result.confidence:.2f} mode={result.failure_mode}"
+    )
+    return result.should_escalate
+
+
+def _self_check_messages(decision: _Decision, answer: str) -> list[Message]:
+    return [
+        Message(Role.SYSTEM, _LOCAL_SELF_CHECK_SYSTEM_PROMPT),
+        Message(Role.USER, f"{_task_context(decision)}\n\n[Local answer]\n{answer}"),
+    ]
+
+
+def _task_context(decision: _Decision) -> str:
+    return (
+        f"[Predicted category]\n{decision.category or 'unknown'}\n\n"
+        f"[Router risk]\n{decision.risk:.3f}\n\n"
+        f"[Router threshold]\n{decision.threshold:.3f}\n\n"
+        f"[Task]\n{decision.task.prompt}"
+    )
 
 
 def _fast_cloud_config(config: ModelConfig) -> ModelConfig:

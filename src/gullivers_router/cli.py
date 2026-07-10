@@ -58,6 +58,17 @@ def _add_run_parser(subparsers: argparse._SubParsersAction) -> None:
         action="store_true",
         help="Write route diagnostics without generating answers.",
     )
+    run_parser.add_argument(
+        "--local-cascade",
+        action="store_true",
+        help="Let local-routed borderline tasks self-check before accepting local answers.",
+    )
+    run_parser.add_argument(
+        "--cascade-margin",
+        type=float,
+        default=router.DEFAULT_CASCADE_MARGIN,
+        help="Risk margin below the routing threshold that still gets local cascade checks.",
+    )
 
 
 def _add_score_practice_parser(subparsers: argparse._SubParsersAction) -> None:
@@ -176,6 +187,8 @@ def main(argv: list[str] | None = None) -> int:
             router_weights=args.router_weights,
             workers=args.workers,
             classify_only=args.classify_only,
+            local_cascade=args.local_cascade,
+            cascade_margin=args.cascade_margin,
         )
     elif args.command == "score-practice":
         practice.score_practice(

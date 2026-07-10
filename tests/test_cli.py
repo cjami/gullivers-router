@@ -1,6 +1,6 @@
 from gullivers_router.cli import build_parser, main
 from gullivers_router.inference.base import DEFAULT_INFERENCE_SEED
-from gullivers_router.router import DEFAULT_INPUT, DEFAULT_OUTPUT, DEFAULT_ROUTER_WEIGHTS
+from gullivers_router.router import DEFAULT_CASCADE_MARGIN, DEFAULT_INPUT, DEFAULT_OUTPUT, DEFAULT_ROUTER_WEIGHTS
 from gullivers_router.training import DEFAULT_CONCURRENCY
 
 
@@ -29,6 +29,9 @@ def test_run_dispatches_to_router(monkeypatch):
                 "--workers",
                 "3",
                 "--classify-only",
+                "--local-cascade",
+                "--cascade-margin",
+                "0.2",
             ]
         )
         == 0
@@ -40,6 +43,8 @@ def test_run_dispatches_to_router(monkeypatch):
     assert str(call["router_weights"]) == "artifacts\\dev\\router.npz"
     assert call["workers"] == 3
     assert call["classify_only"] is True
+    assert call["local_cascade"] is True
+    assert call["cascade_margin"] == 0.2
 
 
 def test_run_defaults_flow_through_to_router(monkeypatch):
@@ -54,6 +59,8 @@ def test_run_defaults_flow_through_to_router(monkeypatch):
     assert call["router_weights"] == DEFAULT_ROUTER_WEIGHTS
     assert call["workers"] == DEFAULT_CONCURRENCY
     assert call["classify_only"] is False
+    assert call["local_cascade"] is False
+    assert call["cascade_margin"] == DEFAULT_CASCADE_MARGIN
 
 
 def test_score_practice_dispatches_to_practice(monkeypatch):
