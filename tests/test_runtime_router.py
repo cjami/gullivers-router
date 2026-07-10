@@ -297,7 +297,7 @@ def test_sentiment_and_summary_categories_use_threshold_routing(tmp_path):
     assert [decision.model for decision in decisions] == ["local-model", "cloud-model"]
 
 
-def test_code_categories_route_cloud_first(tmp_path):
+def test_code_generation_routes_cloud_first_but_debugging_uses_threshold(tmp_path):
     weights_path = tmp_path / "router.npz"
     _cloud_first_category_weights(weights_path)
     weights = dict(np.load(weights_path))
@@ -311,8 +311,8 @@ def test_code_categories_route_cloud_first(tmp_path):
     )
 
     assert [decision.category for decision in decisions] == ["code_debugging", "code_generation"]
-    assert [decision.route for decision in decisions] == [CLOUD_ROUTE, CLOUD_ROUTE]
-    assert [decision.model for decision in decisions] == ["cloud-model", "cloud-model"]
+    assert [decision.route for decision in decisions] == [LOCAL_ROUTE, CLOUD_ROUTE]
+    assert [decision.model for decision in decisions] == ["local-model", "cloud-model"]
 
 
 def test_predicted_math_expression_routes_to_deterministic_answer(tmp_path):
