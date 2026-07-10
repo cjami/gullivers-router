@@ -8,6 +8,7 @@ from gullivers_router.config import ModelConfig, Settings
 from gullivers_router.inference.base import Provider, Role, TokenUsage
 from gullivers_router.router import (
     CLOUD_ROUTE,
+    DETERMINISTIC_MATH_ROUTE,
     LOCAL_ROUTE,
     RuntimeContext,
     RuntimeOptions,
@@ -188,6 +189,20 @@ def _known_category_weights(path):
     )
 
 
+def _always_math_weights(path):
+    np.savez(
+        path,
+        weights=np.array([1.0]),
+        bias=np.float64(0.0),
+        alpha=np.float64(0.5),
+        normalize=True,
+        cat_weights=np.array([[0.0]]),
+        cat_bias=np.array([1.0]),
+        cat_classes=np.array(["mathematical_reasoning"]),
+        cat_alpha=np.array([0.5]),
+    )
+
+
 def _cloud_fast_category_weights(path):
     np.savez(
         path,
@@ -218,6 +233,77 @@ def test_classify_tasks_applies_per_category_thresholds(tmp_path):
     assert [decision.category for decision in decisions] == ["easy", "hard"]
     assert [decision.threshold for decision in decisions] == [0.9, 0.1]
     assert [decision.route for decision in decisions] == [LOCAL_ROUTE, CLOUD_ROUTE]
+
+
+def test_predicted_math_expression_routes_to_deterministic_answer(tmp_path):
+    weights_path = tmp_path / "router.npz"
+    _always_math_weights(weights_path)
+    weights = dict(np.load(weights_path))
+
+    decisions = classify_tasks(
+        [Task(task_id="math", prompt="Calculate 3 + 3.")],
+        FakeEmbedder(),
+        weights,
+        local_model="local-model",
+        cloud_model="cloud-model",
+    )
+
+    assert decisions[0].route == DETERMINISTIC_MATH_ROUTE
+    assert decisions[0].model == DETERMINISTIC_MATH_ROUTE
+    assert decisions[0].answer == "6"
+
+
+def test_deterministic_math_requires_predicted_math_category(tmp_path):
+    weights_path = tmp_path / "router.npz"
+    _known_category_weights(weights_path)
+    weights = dict(np.load(weights_path))
+
+    decisions = classify_tasks(
+        [Task(task_id="factual", prompt="Calculate 3 + 3.")],
+        FakeEmbedder(),
+        weights,
+        local_model="local-model",
+        cloud_model="cloud-model",
+    )
+
+    assert decisions[0].category == "factual_knowledge"
+    assert decisions[0].route == LOCAL_ROUTE
+    assert decisions[0].answer is None
+
+
+def test_percentage_math_phrase_does_not_false_positive(tmp_path):
+    weights_path = tmp_path / "router.npz"
+    _always_math_weights(weights_path)
+    weights = dict(np.load(weights_path))
+
+    decisions = classify_tasks(
+        [Task(task_id="percent", prompt="What is 20% more than 50?")],
+        FakeEmbedder(),
+        weights,
+        local_model="local-model",
+        cloud_model="cloud-model",
+    )
+
+    assert decisions[0].route == LOCAL_ROUTE
+    assert decisions[0].answer is None
+
+
+def test_all_deterministic_answers_skip_chat_models(tmp_path):
+    input_path = tmp_path / "tasks.json"
+    output_path = tmp_path / "results.json"
+    weights_path = tmp_path / "router.npz"
+    _always_math_weights(weights_path)
+    input_path.write_text(json.dumps([{"task_id": "math", "prompt": "What is 21 plus 5?"}]), encoding="utf-8")
+
+    def fail_chat_factory(config):
+        raise UnexpectedChatBuildError
+
+    run_with_context(
+        RuntimeOptions(input_path=input_path, output_path=output_path, router_weights=weights_path),
+        _context(chat_factory=fail_chat_factory),
+    )
+
+    assert json.loads(output_path.read_text(encoding="utf-8")) == [{"task_id": "math", "answer": "26"}]
 
 
 def test_answer_prompts_include_category_hints(tmp_path):

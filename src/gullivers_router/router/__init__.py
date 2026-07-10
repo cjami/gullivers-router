@@ -16,6 +16,7 @@ import numpy as np
 from gullivers_router.config import Settings
 from gullivers_router.inference.base import Closeable, UsageReporting, system_and_user_message
 from gullivers_router.inference.factory import build_chat_model, build_embedding_model
+from gullivers_router.router.deterministic_math import deterministic_math_answer
 from gullivers_router.router.model import category_thresholds, load_numpy, predict_categories, probabilities
 from gullivers_router.training.generate import DEFAULT_CONCURRENCY, complete_with_retry
 
@@ -30,6 +31,7 @@ DEFAULT_OUTPUT = Path("outputs/results.json")
 DEFAULT_ROUTER_WEIGHTS = Path("artifacts/training/router.npz")
 LOCAL_ROUTE = "local"
 CLOUD_ROUTE = "cloud"
+DETERMINISTIC_MATH_ROUTE = "deterministic_math"
 
 _CONCISE_SYSTEM_PROMPT = "Answer accurately and concisely. Follow requested format constraints; skip filler."
 _CATEGORY_SYSTEM_HINTS = {
@@ -58,6 +60,7 @@ __all__ = [
     "DEFAULT_INPUT",
     "DEFAULT_OUTPUT",
     "DEFAULT_ROUTER_WEIGHTS",
+    "DETERMINISTIC_MATH_ROUTE",
     "LOCAL_ROUTE",
     "RuntimeContext",
     "RuntimeOptions",
@@ -83,6 +86,7 @@ class _Decision:
     threshold: float
     model: str
     category: str | None
+    answer: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,11 +160,13 @@ def run_with_context(options: RuntimeOptions, context: RuntimeContext) -> None:
     _release_embedder(embedder)
     _log_rss("after releasing embedder")
 
-    local = context.chat_factory(context.settings.local)
-    cloud = context.chat_factory(context.settings.cloud)
+    needs_local = any(decision.route == LOCAL_ROUTE for decision in decisions)
+    needs_cloud = any(decision.route == CLOUD_ROUTE for decision in decisions)
+    local = context.chat_factory(context.settings.local) if needs_local else None
+    cloud = context.chat_factory(context.settings.cloud) if needs_cloud else None
     cloud_fast = (
         context.chat_factory(_fast_cloud_config(context.settings.cloud))
-        if any(_uses_fast_cloud(decision) for decision in decisions)
+        if needs_cloud and any(_uses_fast_cloud(decision) for decision in decisions)
         else None
     )
     answers = answer_tasks(decisions, local, cloud, cloud_fast=cloud_fast, workers=options.workers)
@@ -222,6 +228,10 @@ def classify_tasks(
     for task, risk, threshold, category in zip(tasks, risks, thresholds, categories, strict=True):
         route = CLOUD_ROUTE if risk >= threshold else LOCAL_ROUTE
         model = cloud_model if route == CLOUD_ROUTE else local_model
+        answer = deterministic_math_answer(task.prompt, category)
+        if answer is not None:
+            route = DETERMINISTIC_MATH_ROUTE
+            model = DETERMINISTIC_MATH_ROUTE
         _log(f"[classify] {task.task_id}: risk={float(risk):.3f} thr={threshold:.3f} {category} -> {route} ({model})")
         decisions.append(
             _Decision(
@@ -231,10 +241,13 @@ def classify_tasks(
                 threshold=float(threshold),
                 model=model,
                 category=category,
+                answer=answer,
             )
         )
     local_count = sum(1 for decision in decisions if decision.route == LOCAL_ROUTE)
-    _log(f"[classify] routed {local_count} -> local, {len(decisions) - local_count} -> cloud")
+    cloud_count = sum(1 for decision in decisions if decision.route == CLOUD_ROUTE)
+    direct_count = len(decisions) - local_count - cloud_count
+    _log(f"[classify] routed {local_count} -> local, {cloud_count} -> cloud, {direct_count} -> deterministic")
     return decisions
 
 
@@ -252,7 +265,7 @@ def _thresholds(
 
 def classification_record(decision: _Decision) -> dict[str, object]:
     """Render a classifier diagnostic row."""
-    return {
+    record = {
         "task_id": decision.task.task_id,
         "route": decision.route,
         "risk": decision.risk,
@@ -260,12 +273,15 @@ def classification_record(decision: _Decision) -> dict[str, object]:
         "category": decision.category,
         "model": decision.model,
     }
+    if decision.answer is not None:
+        record["answer"] = decision.answer
+    return record
 
 
 def answer_tasks(
     decisions: Sequence[_Decision],
-    local: ChatModel,
-    cloud: ChatModel,
+    local: ChatModel | None,
+    cloud: ChatModel | None,
     *,
     cloud_fast: ChatModel | None = None,
     workers: int,
@@ -279,9 +295,13 @@ def answer_tasks(
     """
     local_decisions = [decision for decision in decisions if decision.route == LOCAL_ROUTE]
     cloud_decisions = [decision for decision in decisions if decision.route == CLOUD_ROUTE]
-    _log(f"answering {len(local_decisions)} local (sequential), {len(cloud_decisions)} cloud ({workers} workers)")
+    direct_decisions = [decision for decision in decisions if decision.route == DETERMINISTIC_MATH_ROUTE]
+    _log(
+        f"answering {len(local_decisions)} local (sequential), {len(cloud_decisions)} cloud "
+        f"({workers} workers), {len(direct_decisions)} deterministic"
+    )
 
-    answers: dict[str, str] = {}
+    answers = {decision.task.task_id: str(decision.answer) for decision in direct_decisions}
     with futures.ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
         cloud_futures = {
             pool.submit(
@@ -293,6 +313,9 @@ def answer_tasks(
         }
         for index, decision in enumerate(local_decisions, start=1):
             _log(f"[local {index}/{len(local_decisions)}] {decision.task.task_id}")
+            if local is None:
+                msg = "local model is required for local-routed tasks"
+                raise RuntimeError(msg)
             answers[decision.task.task_id] = local.complete(
                 system_and_user_message(_system_prompt(decision), decision.task.prompt)
             )
@@ -301,13 +324,16 @@ def answer_tasks(
             answers[task_id] = future.result()
             _log(f"[cloud {completed}/{len(cloud_decisions)}] {task_id} done")
 
-    if cloud_decisions:
+    if cloud_decisions and cloud is not None:
         _log_cloud_usage(cloud)
 
     return [(decision.task.task_id, answers[decision.task.task_id]) for decision in decisions]
 
 
-def _cloud_model(decision: _Decision, cloud: ChatModel, cloud_fast: ChatModel | None) -> ChatModel:
+def _cloud_model(decision: _Decision, cloud: ChatModel | None, cloud_fast: ChatModel | None) -> ChatModel:
+    if cloud is None:
+        msg = "cloud model is required for cloud-routed tasks"
+        raise RuntimeError(msg)
     if cloud_fast is not None and _uses_fast_cloud(decision):
         return cloud_fast
     return cloud
