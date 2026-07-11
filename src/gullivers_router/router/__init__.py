@@ -48,7 +48,6 @@ _CONCISE_SYSTEM_PROMPT = "Answer correctly in the fewest words. No filler."
 _CATEGORY_SYSTEM_HINTS = {
     "code_debugging": "Identify bug; provide corrected implementation only.",
     "code_generation": "Use requested language; complete function only; no examples unless asked.",
-    "factual_knowledge": "Answer only the requested fact, concept, or mechanism.",
     "logical_reasoning": "Show brief deductions and final answer.",
     "mathematical_reasoning": "Show brief calculations and final answer.",
     "named_entity_recognition": "Find all people, organizations, locations, full dates/times; label type.",

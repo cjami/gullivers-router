@@ -567,6 +567,26 @@ def test_answer_prompts_include_category_hints(tmp_path):
     assert chats["cloud-model"].calls == []
 
 
+def test_factual_answer_uses_only_concise_system_prompt(tmp_path):
+    input_path = tmp_path / "tasks.json"
+    output_path = tmp_path / "results.json"
+    weights_path = tmp_path / "router.npz"
+    _known_category_weights(weights_path)
+    input_path.write_text(
+        json.dumps([{"task_id": "fact", "prompt": "local factual question"}]),
+        encoding="utf-8",
+    )
+    local = FakeChat("local")
+
+    run_with_context(
+        RuntimeOptions(input_path=input_path, output_path=output_path, router_weights=weights_path),
+        _context(chats={Provider.LLAMA: local, Provider.FIREWORKS: FakeChat("cloud")}),
+    )
+
+    assert local.calls[0][0].role == Role.SYSTEM
+    assert local.calls[0][0].content == "Answer correctly in the fewest words. No filler."
+
+
 def test_specialist_runs_before_local_and_is_released(tmp_path):
     input_path = tmp_path / "tasks.json"
     output_path = tmp_path / "results.json"
