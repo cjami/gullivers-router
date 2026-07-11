@@ -48,11 +48,11 @@ _CATEGORY_SYSTEM_HINTS = {
     "code_debugging": "Identify bug; provide corrected implementation only.",
     "code_generation": "Use requested language; complete function only; no examples unless asked.",
     "factual_knowledge": "Answer only the requested fact, concept, or mechanism.",
-    "logical_reasoning": "Give only necessary deductions and final answer.",
-    "mathematical_reasoning": "Give only necessary calculation and final answer.",
-    "named_entity_recognition": "Find people, organizations, locations, dates/times; label type.",
+    "logical_reasoning": "Show brief deductions and final answer.",
+    "mathematical_reasoning": "Show brief calculations and final answer.",
+    "named_entity_recognition": "Find all people, organizations, locations, full dates/times; label type.",
     "sentiment_classification": "Label positive, negative, or neutral; briefly justify.",
-    "text_summarisation": "Preserve key facts - be concise; obey length/format.",
+    "text_summarisation": "Preserve all facts; obey length/format.",
 }
 _FAST_CLOUD_CATEGORIES = {
     "code_debugging",

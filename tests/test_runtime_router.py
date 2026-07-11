@@ -536,10 +536,7 @@ def test_answer_prompts_include_category_hints(tmp_path):
         sentiment_system == "Answer correctly in the fewest words. No filler. "
         "Label positive, negative, or neutral; briefly justify."
     )
-    assert (
-        summary_system == "Answer correctly in the fewest words. No filler. "
-        "Preserve key facts - be concise; obey length/format."
-    )
+    assert summary_system == "Answer correctly in the fewest words. No filler. Preserve all facts; obey length/format."
     assert "For " not in sentiment_system
     assert "For " not in summary_system
     assert chats["local-model"].calls[0][-1].content == "local sentiment question"
