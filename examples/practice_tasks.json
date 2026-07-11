@@ -30,5 +30,53 @@
   {
     "task_id": "practice-08",
     "prompt": "Write a Python function that returns the second-largest number in a list, handling duplicates correctly."
+  },
+  {
+    "task_id": "practice-09",
+    "prompt": "Briefly answer: What process lets plants turn sunlight into chemical energy, and what gas do they take in?"
+  },
+  {
+    "task_id": "practice-10",
+    "prompt": "A train travels 180 miles in 3 hours, then 120 miles in 2 hours. What is its average speed?"
+  },
+  {
+    "task_id": "practice-11",
+    "prompt": "Classify the sentiment: The room was spotless and staff were kind, but street noise made sleep hard."
+  },
+  {
+    "task_id": "practice-12",
+    "prompt": "Summarize in exactly one sentence: A city park replaced paved lots with native gardens, benches, and paths. The project cools the area, helps pollinators, and gives residents a quieter place to rest."
+  },
+  {
+    "task_id": "practice-13",
+    "prompt": "Extract named entities and types: Priya Nair presented AMD's robotics demo in Toronto on Tuesday."
+  },
+  {
+    "task_id": "practice-14",
+    "prompt": "Fix briefly: def is_palindrome(s): return s == s.sort()"
+  },
+  {
+    "task_id": "practice-15",
+    "prompt": "Boxes A-D are red, blue, green, yellow. A is not red/yellow. B is green. C is not blue. What color is A?"
+  },
+  {
+    "task_id": "practice-16",
+    "prompt": "Write a concise Python function that counts vowels in a string, ignoring case."
+  },
+  {
+    "task_id": "practice-17",
+    "prompt": "Summarize in no more than 16 words: Rural wells tested low-cost sensors for six months. Alerts helped caretakers respond faster to contamination."
+  },
+  {
+    "task_id": "practice-18",
+    "prompt": "Extract named entities and types: Jordan Lee moved from Nairobi to Stripe's London office in June 2025."
+  },
+  {
+    "task_id": "practice-19",
+    "prompt": "A jacket costs $80 after a 20% discount. Original price?"
+  },
+  {
+    "task_id": "practice-20",
+    "prompt": "Classify the sentiment: I expected confusion, yet the guide was clear and everything worked first try."
   }
 ]

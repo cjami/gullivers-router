@@ -38,5 +38,65 @@
     "task_id": "practice-08",
     "answer": "def second_largest(nums):\n    unique = sorted(set(nums))\n    if len(unique) < 2:\n        raise ValueError(\"need at least two distinct numbers\")\n    return unique[-2]",
     "notes": "The solution should return the second-largest distinct value, so duplicates of the maximum do not count as the answer."
+  },
+  {
+    "task_id": "practice-09",
+    "answer": "Photosynthesis; carbon dioxide.",
+    "notes": "Accept CO2."
+  },
+  {
+    "task_id": "practice-10",
+    "answer": "60 miles per hour.",
+    "notes": "300 miles / 5 hours = 60 mph."
+  },
+  {
+    "task_id": "practice-11",
+    "answer": "Neutral: positive room/staff, negative noise.",
+    "notes": "Accept balanced or mixed if both sides are mentioned."
+  },
+  {
+    "task_id": "practice-12",
+    "answer": "The park added gardens, benches, and paths to cool the area, support pollinators, and offer quiet rest.",
+    "notes": "Must be exactly one sentence."
+  },
+  {
+    "task_id": "practice-13",
+    "answer": "Priya Nair: person; AMD: organization; Toronto: location; Tuesday: date.",
+    "notes": "Accept PERSON, ORG, GPE/LOC, DATE."
+  },
+  {
+    "task_id": "practice-14",
+    "answer": "def is_palindrome(s): return s == s[::-1]",
+    "notes": "Must compare with the reverse; optional normalization is fine."
+  },
+  {
+    "task_id": "practice-15",
+    "answer": "Box A is blue.",
+    "notes": "B is green; A cannot be red or yellow."
+  },
+  {
+    "task_id": "practice-16",
+    "answer": "def count_vowels(s):\n    return sum(1 for ch in s.lower() if ch in \"aeiou\")",
+    "notes": "Accept any concise correct implementation."
+  },
+  {
+    "task_id": "practice-17",
+    "answer": "Low-cost well sensors alerted caretakers to contamination faster during a six-month rural trial.",
+    "notes": "Must be no more than 16 words."
+  },
+  {
+    "task_id": "practice-18",
+    "answer": "Jordan Lee: person; Nairobi: location; Stripe: organization; London: location; June 2025: date.",
+    "notes": "Accept PERSON, ORG, GPE/LOC, DATE."
+  },
+  {
+    "task_id": "practice-19",
+    "answer": "$100.",
+    "notes": "80 / 0.8 = 100."
+  },
+  {
+    "task_id": "practice-20",
+    "answer": "Positive: the guide was clear and setup worked.",
+    "notes": "The final experience is successful."
   }
 ]

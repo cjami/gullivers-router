@@ -72,6 +72,7 @@ _CASCADE_CATEGORIES = {
     "mathematical_reasoning",
 }
 _CLOUD_FIRST_CATEGORIES = {
+    "code_debugging",
     "code_generation",
 }
 _LOCAL_FIRST_CATEGORIES: set[str] = set()
