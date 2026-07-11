@@ -34,7 +34,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: models
-          key: models-gemma-4-E2B_q4_0-it-qwen3-embedding-0.6B-Q8_0-qwen3-0.6B-Q4_0
+          key: models-gemma-4-E2B_q4_0-it-qwen3-embedding-0.6B-Q8_0-qwen3-0.6B-Q4_0-ner-standard-Q8_0
 
       - name: Download GGUF models
         if: steps.models-cache.outputs.cache-hit != 'true'
@@ -48,6 +48,8 @@ jobs:
             --local-dir models/Qwen/Qwen3-Embedding-0.6B-GGUF
           hf download unsloth/Qwen3-0.6B-GGUF Qwen3-0.6B-Q4_0.gguf \
             --local-dir models/unsloth/Qwen3-0.6B-GGUF
+          hf download Minibase/NER-Standard model.gguf \
+            --local-dir models/Minibase/NER-Standard
 
       - name: Lowercase image name
         run: echo "IMAGE=${IMAGE,,}" >> "$GITHUB_ENV"
