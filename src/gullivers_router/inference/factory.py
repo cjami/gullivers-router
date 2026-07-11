@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from gullivers_router.inference.base import ChatModel, EmbeddingModel, Provider
+from gullivers_router.inference.base import ChatModel, EmbeddingModel, NamedEntityModel, Provider
 from gullivers_router.inference.llama_cpp import (
     DEFAULT_CHAT_CONTEXT,
     DEFAULT_ENABLE_THINKING,
@@ -15,6 +15,7 @@ from gullivers_router.inference.llama_cpp import (
     OFFLOAD_ALL_LAYERS,
     LlamaCppChat,
     LlamaCppEmbedder,
+    LlamaCppNamedEntity,
 )
 from gullivers_router.inference.openai_compat import OpenAICompatChat
 from gullivers_router.inference.truncation import EMBEDDING_CONTEXT_LIMIT
@@ -70,3 +71,18 @@ def build_embedding_model(config: ModelConfig) -> EmbeddingModel:
         case _:
             error = _unsupported("embedding", config)
             raise error
+
+
+def build_named_entity_model(config: ModelConfig) -> NamedEntityModel:
+    """Build the dedicated local named-entity extraction model."""
+    if config.provider != Provider.LLAMA:
+        error = _unsupported("named entity extraction", config)
+        raise error
+    return LlamaCppNamedEntity(
+        config,
+        n_ctx=config.n_ctx if config.n_ctx is not None else DEFAULT_CHAT_CONTEXT,
+        n_gpu_layers=config.n_gpu_layers if config.n_gpu_layers is not None else OFFLOAD_ALL_LAYERS,
+        max_tokens=config.max_tokens if config.max_tokens is not None else 512,
+        n_threads=config.n_threads,
+        model_root=config.model_root or DEFAULT_MODEL_ROOT,
+    )

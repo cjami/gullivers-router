@@ -20,6 +20,9 @@
 !models/unsloth/
 !models/unsloth/Qwen3-0.6B-GGUF/
 !models/unsloth/Qwen3-0.6B-GGUF/Qwen3-0.6B-Q4_0.gguf
+!models/Minibase/
+!models/Minibase/NER-Standard/
+!models/Minibase/NER-Standard/model.gguf
 !models/ggml-org/
 !models/ggml-org/embeddinggemma-300M-GGUF/
 !models/ggml-org/embeddinggemma-300M-GGUF/*Q8_0.gguf

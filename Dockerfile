@@ -40,6 +40,14 @@ ENV PYTHONUNBUFFERED=1 \
     SPECIALIST_MAX_TOKENS=512 \
     SPECIALIST_N_THREADS=2 \
     SPECIALIST_MODEL_ROOT=/app/models \
+    NER_PROVIDER=llama \
+    NER_REPO_ID=Minibase/NER-Standard \
+    NER_FILENAME=model.gguf \
+    NER_N_CTX=2048 \
+    NER_N_GPU_LAYERS=0 \
+    NER_MAX_TOKENS=512 \
+    NER_N_THREADS=2 \
+    NER_MODEL_ROOT=/app/models \
     EMBEDDING_PROVIDER=llama \
     EMBEDDING_REPO_ID=Qwen/Qwen3-Embedding-0.6B-GGUF \
     EMBEDDING_FILENAME=Qwen3-Embedding-0.6B-Q8_0.gguf \
@@ -59,6 +67,8 @@ COPY models/google/gemma-4-E2B-it-qat-q4_0-gguf/gemma-4-E2B_q4_0-it.gguf \
     /app/models/google/gemma-4-E2B-it-qat-q4_0-gguf/gemma-4-E2B_q4_0-it.gguf
 COPY models/unsloth/Qwen3-0.6B-GGUF/Qwen3-0.6B-Q4_0.gguf \
     /app/models/unsloth/Qwen3-0.6B-GGUF/Qwen3-0.6B-Q4_0.gguf
+COPY models/Minibase/NER-Standard/model.gguf \
+    /app/models/Minibase/NER-Standard/model.gguf
 COPY models/Qwen/Qwen3-Embedding-0.6B-GGUF/Qwen3-Embedding-0.6B-Q8_0.gguf \
     /app/models/Qwen/Qwen3-Embedding-0.6B-GGUF/Qwen3-Embedding-0.6B-Q8_0.gguf
 COPY artifacts/training/router.npz /app/artifacts/training/router.npz

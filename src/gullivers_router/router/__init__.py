@@ -23,17 +23,18 @@ from gullivers_router.inference.base import (
     UsageReporting,
     system_and_user_message,
 )
-from gullivers_router.inference.factory import build_chat_model, build_embedding_model
+from gullivers_router.inference.factory import build_chat_model, build_embedding_model, build_named_entity_model
 from gullivers_router.inference.structured import complete_structured
 from gullivers_router.router.deterministic_math import deterministic_math_answer
 from gullivers_router.router.model import category_thresholds, load_numpy, predict_categories, probabilities
+from gullivers_router.router.ner import answer_named_entities
 from gullivers_router.training.generate import DEFAULT_CONCURRENCY, call_with_retry, complete_with_retry
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
     from gullivers_router.config import ModelConfig
-    from gullivers_router.inference.base import ChatModel, EmbeddingModel
+    from gullivers_router.inference.base import ChatModel, EmbeddingModel, NamedEntityModel
 
 DEFAULT_INPUT = Path("examples/practice_tasks.json")
 DEFAULT_OUTPUT = Path("outputs/results.json")
@@ -77,16 +78,9 @@ _CLOUD_FIRST_CATEGORIES = {
 }
 _LOCAL_FIRST_CATEGORIES: set[str] = set()
 _SPECIALIST_FIRST_CATEGORIES = {
-    "named_entity_recognition",
     "text_summarisation",
 }
-_NER_SPECIALIST_PROMPT = (
-    "Extract named entities. Types are person, organization, location, date.\n"
-    "Example text: Alice Smith joined AMD in Austin yesterday.\n"
-    "Example entities: Alice Smith: person; AMD: organization; Austin: location; yesterday: date.\n\n"
-    "Text: {prompt}\n"
-    "Entities:"
-)
+_NER_FIRST_CATEGORIES = {"named_entity_recognition"}
 _LOCAL_SELF_CHECK_SYSTEM_PROMPT = (
     "You are a strict verifier for a small local model. Given the original task and the local answer, decide "
     "whether the answer is safe to return or should be escalated to a stronger cloud model. Escalate for likely "
@@ -148,6 +142,7 @@ class RuntimeContext:
     settings: Settings
     chat_factory: Callable[[ModelConfig], ChatModel]
     embedding_factory: Callable[[ModelConfig], EmbeddingModel]
+    ner_factory: Callable[[ModelConfig], NamedEntityModel]
 
 
 def run(  # noqa: PLR0913 - CLI options are passed through explicitly.
@@ -175,6 +170,7 @@ def run(  # noqa: PLR0913 - CLI options are passed through explicitly.
             settings=Settings.from_env(),
             chat_factory=build_chat_model,
             embedding_factory=build_embedding_model,
+            ner_factory=build_named_entity_model,
         ),
     )
 
@@ -185,9 +181,10 @@ def run_with_context(options: RuntimeOptions, context: RuntimeContext) -> None:
     _log(f"loaded {len(tasks)} tasks <- {options.input_path}")
     local_model = _model_name(context.settings.local)
     specialist_model = _model_name(context.settings.specialist)
+    ner_model = _model_name(context.settings.ner)
     cloud_model = _model_name(context.settings.cloud)
     _log(
-        f"routing with local={local_model} specialist={specialist_model} "
+        f"routing with local={local_model} specialist={specialist_model} ner={ner_model} "
         f"cloud={cloud_model} weights={options.router_weights}"
     )
 
@@ -198,6 +195,7 @@ def run_with_context(options: RuntimeOptions, context: RuntimeContext) -> None:
         load_numpy(options.router_weights),
         local_model=local_model,
         specialist_model=specialist_model,
+        ner_model=ner_model,
         cloud_model=cloud_model,
     )
 
@@ -211,6 +209,7 @@ def run_with_context(options: RuntimeOptions, context: RuntimeContext) -> None:
     _log_rss("after releasing embedder")
 
     needs_specialist = any(_uses_specialist_model(decision) for decision in decisions)
+    needs_ner = any(_uses_ner_model(decision) for decision in decisions)
     needs_cloud = any(decision.route == CLOUD_ROUTE for decision in decisions)
     cascade_candidates = [decision for decision in decisions if _uses_local_cascade(decision, options.cascade_margin)]
     needs_cascade_cloud = options.local_cascade and bool(cascade_candidates)
@@ -220,6 +219,7 @@ def run_with_context(options: RuntimeOptions, context: RuntimeContext) -> None:
         if decision.route == CLOUD_ROUTE or (options.local_cascade and decision in cascade_candidates)
     ]
     specialist = context.chat_factory(context.settings.specialist) if needs_specialist else None
+    ner = context.ner_factory(context.settings.ner) if needs_ner else None
     cloud = context.chat_factory(context.settings.cloud) if needs_cloud or needs_cascade_cloud else None
     cloud_fast = (
         context.chat_factory(_fast_cloud_config(context.settings.cloud))
@@ -231,6 +231,7 @@ def run_with_context(options: RuntimeOptions, context: RuntimeContext) -> None:
         decisions,
         lambda: context.chat_factory(context.settings.local),
         specialist,
+        ner,
         cloud,
         cloud_fast=cloud_fast,
         workers=options.workers,
@@ -281,6 +282,7 @@ def classify_tasks(  # noqa: PLR0913 - classifier diagnostics need explicit mode
     *,
     local_model: str,
     specialist_model: str | None = None,
+    ner_model: str | None = None,
     cloud_model: str,
 ) -> list[_Decision]:
     """Classify tasks into local or cloud routes."""
@@ -303,6 +305,9 @@ def classify_tasks(  # noqa: PLR0913 - classifier diagnostics need explicit mode
         elif category in _CLOUD_FIRST_CATEGORIES:
             route = CLOUD_ROUTE
             model = cloud_model
+        elif category in _NER_FIRST_CATEGORIES:
+            route = LOCAL_ROUTE
+            model = ner_model or specialist_model or local_model
         elif category in _SPECIALIST_FIRST_CATEGORIES:
             route = LOCAL_ROUTE
             model = specialist_model or local_model
@@ -372,10 +377,11 @@ class _LocalSelfCheck(BaseModel):
     rationale: str
 
 
-def answer_tasks(  # noqa: PLR0913 - answer orchestration wires distinct runtime dependencies.
+def answer_tasks(  # noqa: C901, PLR0913 - orchestration wires distinct runtime dependencies.
     decisions: Sequence[_Decision],
     local_factory: Callable[[], ChatModel],
     specialist: ChatModel | None,
+    ner: NamedEntityModel | None,
     cloud: ChatModel | None,
     *,
     cloud_fast: ChatModel | None = None,
@@ -390,16 +396,19 @@ def answer_tasks(  # noqa: PLR0913 - answer orchestration wires distinct runtime
     local inference (and its cold-start load) overlaps the in-flight cloud latency instead of
     waiting behind it.
     """
+    ner_decisions = [decision for decision in decisions if _uses_ner_model(decision)]
     specialist_decisions = [decision for decision in decisions if _uses_specialist_model(decision)]
     local_decisions = [
-        decision for decision in decisions if decision.route == LOCAL_ROUTE and not _uses_specialist_model(decision)
+        decision
+        for decision in decisions
+        if decision.route == LOCAL_ROUTE and not _uses_specialist_model(decision) and not _uses_ner_model(decision)
     ]
     cloud_decisions = [decision for decision in decisions if decision.route == CLOUD_ROUTE]
     direct_decisions = [decision for decision in decisions if decision.route == DETERMINISTIC_MATH_ROUTE]
     cascade_count = sum(1 for decision in local_decisions if _uses_local_cascade(decision, cascade_margin))
     cascade_label = f", {cascade_count} cascade-eligible" if local_cascade else ""
     _log(
-        f"answering {len(specialist_decisions)} specialist, {len(local_decisions)} local "
+        f"answering {len(ner_decisions)} ner, {len(specialist_decisions)} specialist, {len(local_decisions)} local "
         f"(sequential{cascade_label}), {len(cloud_decisions)} cloud ({workers} workers), "
         f"{len(direct_decisions)} deterministic"
     )
@@ -414,6 +423,17 @@ def answer_tasks(  # noqa: PLR0913 - answer orchestration wires distinct runtime
             ): decision.task.task_id
             for decision in cloud_decisions
         }
+        for index, decision in enumerate(ner_decisions, start=1):
+            _log(f"[ner {index}/{len(ner_decisions)}] {decision.task.task_id}")
+            if ner is None:
+                msg = "NER model is required for NER-routed tasks"
+                raise RuntimeError(msg)
+            answers[decision.task.task_id] = answer_named_entities(decision.task.prompt, ner)
+
+        if ner_decisions:
+            _release_named_entity_model(ner)
+            _log_rss("after releasing ner")
+
         for index, decision in enumerate(specialist_decisions, start=1):
             _log(f"[specialist {index}/{len(specialist_decisions)}] {decision.task.task_id}")
             if specialist is None:
@@ -477,10 +497,14 @@ def _uses_specialist_model(decision: _Decision) -> bool:
     return decision.route == LOCAL_ROUTE and decision.category in _SPECIALIST_FIRST_CATEGORIES
 
 
+def _uses_ner_model(decision: _Decision) -> bool:
+    return decision.route == LOCAL_ROUTE and decision.category in _NER_FIRST_CATEGORIES
+
+
 def _uses_local_cascade(decision: _Decision, margin: float) -> bool:
     if decision.route != LOCAL_ROUTE:
         return False
-    if _uses_specialist_model(decision):
+    if _uses_specialist_model(decision) or _uses_ner_model(decision):
         return False
     return decision.category in _CASCADE_CATEGORIES or decision.risk >= decision.threshold - margin
 
@@ -521,8 +545,6 @@ def _fast_cloud_config(config: ModelConfig) -> ModelConfig:
 
 
 def _specialist_messages(decision: _Decision) -> list[Message]:
-    if decision.category == "named_entity_recognition":
-        return [Message(Role.USER, _NER_SPECIALIST_PROMPT.format(prompt=decision.task.prompt))]
     return system_and_user_message(_system_prompt(decision), decision.task.prompt)
 
 
@@ -580,6 +602,13 @@ def _release_embedder(embedder: EmbeddingModel) -> None:
 
 def _release_chat_model(model: ChatModel | None) -> None:
     """Release a chat model before loading the next local GGUF."""
+    if isinstance(model, Closeable):
+        model.close()
+    gc.collect()
+
+
+def _release_named_entity_model(model: NamedEntityModel | None) -> None:
+    """Release the NER model before loading the summary specialist."""
     if isinstance(model, Closeable):
         model.close()
     gc.collect()

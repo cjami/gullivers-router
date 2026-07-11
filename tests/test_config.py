@@ -12,6 +12,7 @@ def test_from_env_populates_every_role():
     assert settings.local.provider == Provider.LLAMA
     assert settings.embedding.provider == Provider.LLAMA
     assert settings.specialist.provider == Provider.LLAMA
+    assert settings.ner.provider == Provider.LLAMA
     assert settings.cloud.provider == Provider.FIREWORKS
     assert settings.judge.provider == Provider.FIREWORKS
 
@@ -161,6 +162,18 @@ def test_specialist_defaults_use_qwen_for_local_offload():
     assert settings.specialist.max_tokens == 512
     assert settings.specialist.n_threads == 2
     assert settings.specialist.model_root == Path("models")
+
+
+def test_ner_defaults_use_minibase_standard():
+    settings = Settings.from_env({})
+
+    assert settings.ner.repo_id == "Minibase/NER-Standard"
+    assert settings.ner.filename == "model.gguf"
+    assert settings.ner.n_ctx == 2048
+    assert settings.ner.n_gpu_layers == -1
+    assert settings.ner.max_tokens == 512
+    assert settings.ner.n_threads == 2
+    assert settings.ner.model_root == Path("models")
 
 
 def test_embedding_pooling_and_prefix_can_be_overridden():

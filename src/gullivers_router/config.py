@@ -105,6 +105,19 @@ _ROLE_DEFAULTS: dict[str, _RoleDefaults] = {
         n_threads=2,
         model_root=Path("models"),
     ),
+    "NER": _RoleDefaults(
+        provider=Provider.LLAMA,
+        repo_id="Minibase/NER-Standard",
+        filename="model.gguf",
+        n_ctx=2048,
+        n_gpu_layers=-1,
+        temperature=0.1,
+        top_p=1.0,
+        top_k=1,
+        max_tokens=512,
+        n_threads=2,
+        model_root=Path("models"),
+    ),
     "CLOUD": _RoleDefaults(
         provider=Provider.FIREWORKS,
         model="accounts/fireworks/models/minimax-m3",
@@ -232,6 +245,7 @@ class Settings:
     local: ModelConfig
     embedding: ModelConfig
     specialist: ModelConfig
+    ner: ModelConfig
     cloud: ModelConfig
     judge: ModelConfig
 
@@ -246,6 +260,7 @@ class Settings:
             local=_role_config(env, "LOCAL"),
             embedding=_role_config(env, "EMBEDDING"),
             specialist=_role_config(env, "SPECIALIST"),
+            ner=_role_config(env, "NER"),
             cloud=_role_config(env, "CLOUD"),
             judge=_role_config(env, "JUDGE"),
         )

@@ -69,7 +69,7 @@ uv run gullivers-router run \
 ## Docker submission smoke test
 
 The Dockerfile builds a CPU-only `linux/amd64` image and includes the local Gemma E2B text
-GGUF, the Qwen3 0.6B specialist GGUF, the Qwen3 embedding GGUF used by the router, and
+GGUF, the Qwen3 0.6B summarisation GGUF, the Minibase NER-Standard GGUF, the Qwen3 embedding GGUF used by the router, and
 `artifacts/training/router.npz`.
 
 ```sh

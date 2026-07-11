@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from gullivers_router.config import ModelConfig
 from gullivers_router.inference import factory
 from gullivers_router.inference.base import DEFAULT_INFERENCE_SEED, Message, Provider, Role
-from gullivers_router.inference.llama_cpp import LlamaCppChat, LlamaCppEmbedder
+from gullivers_router.inference.llama_cpp import LlamaCppChat, LlamaCppEmbedder, LlamaCppNamedEntity
 from gullivers_router.inference.openai_compat import OpenAICompatChat
 
 
@@ -37,6 +37,38 @@ def test_build_chat_model_openai_compatible():
 
 def test_build_embedding_model_local():
     assert isinstance(factory.build_embedding_model(_cfg(Provider.LLAMA)), LlamaCppEmbedder)
+
+
+def test_build_named_entity_model_local():
+    model = factory.build_named_entity_model(_cfg(Provider.LLAMA))
+
+    assert isinstance(model, LlamaCppNamedEntity)
+
+
+def test_build_named_entity_model_rejects_cloud_provider():
+    cfg = _cfg(Provider.FIREWORKS, api_key="k", model="m")
+    with pytest.raises(ValueError, match="named entity extraction"):
+        factory.build_named_entity_model(cfg)
+
+
+def test_factory_passes_named_entity_runtime_options(tmp_path):
+    model = factory.build_named_entity_model(
+        _cfg(
+            Provider.LLAMA,
+            n_ctx=1024,
+            n_gpu_layers=0,
+            max_tokens=256,
+            n_threads=2,
+            model_root=tmp_path,
+        )
+    )
+
+    assert isinstance(model, LlamaCppNamedEntity)
+    assert model._n_ctx == 1024
+    assert model._n_gpu_layers == 0
+    assert model._max_tokens == 256
+    assert model._n_threads == 2
+    assert model._model_root == tmp_path
 
 
 def test_factory_passes_llama_chat_runtime_options(tmp_path):
@@ -168,6 +200,35 @@ def test_llama_chat_loads_with_global_seed(monkeypatch):
     assert captured["temperature"] == 0.0
     assert captured["top_p"] == 0.95
     assert captured["top_k"] == 64
+
+
+def test_llama_named_entity_model_uses_direct_deterministic_completion(monkeypatch):
+    captured = {}
+
+    class FakeLlama:
+        @classmethod
+        def from_pretrained(cls, **kwargs) -> "FakeLlama":
+            captured.update(kwargs)
+            return cls()
+
+        def create_completion(self, **kwargs):
+            captured.update(kwargs)
+            return {"choices": [{"text": '{"PER":["Ada Lovelace"]}'}]}
+
+    monkeypatch.setitem(sys.modules, "llama_cpp", SimpleNamespace(Llama=FakeLlama))
+    model = LlamaCppNamedEntity(
+        _cfg(Provider.LLAMA, repo_id="repo", filename="model.gguf"),
+        max_tokens=256,
+    )
+
+    assert model.extract("Ada Lovelace wrote a program.") == '{"PER":["Ada Lovelace"]}'
+    assert "Input: Ada Lovelace wrote a program." in captured["prompt"]
+    assert "DATE" not in captured["prompt"]
+    assert captured["max_tokens"] == 256
+    assert captured["temperature"] == 0.1
+    assert captured["top_p"] == 1.0
+    assert captured["top_k"] == 1
+    assert captured["seed"] == DEFAULT_INFERENCE_SEED
 
 
 def test_llama_chat_uses_local_model_before_hugging_face(monkeypatch, tmp_path):

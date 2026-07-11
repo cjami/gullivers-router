@@ -217,6 +217,83 @@ class LlamaCppChat:
             self._model = None
 
 
+class LlamaCppNamedEntity:
+    """Direct completion interface for Minibase named-entity models."""
+
+    def __init__(  # noqa: PLR0913 - backend controls are independently configurable.
+        self,
+        config: ModelConfig,
+        *,
+        n_ctx: int = DEFAULT_CHAT_CONTEXT,
+        n_gpu_layers: int = OFFLOAD_ALL_LAYERS,
+        max_tokens: int = 512,
+        n_threads: int | None = None,
+        model_root: Path = DEFAULT_MODEL_ROOT,
+    ) -> None:
+        """Configure the NER model; the GGUF loads lazily on first use."""
+        self._config = config
+        self._n_ctx = n_ctx
+        self._n_gpu_layers = n_gpu_layers
+        self._max_tokens = max_tokens
+        self._n_threads = n_threads
+        self._model_root = model_root
+        self._model = None
+
+    def _load(self):  # noqa: ANN202
+        if self._model is None:
+            from llama_cpp import Llama
+
+            local_path = _local_model_path(self._config, self._model_root)
+            if local_path is not None:
+                self._model = Llama(
+                    model_path=str(local_path),
+                    n_ctx=self._n_ctx,
+                    n_gpu_layers=self._n_gpu_layers,
+                    n_threads=self._n_threads,
+                    seed=DEFAULT_INFERENCE_SEED,
+                    verbose=False,
+                )
+            else:
+                self._model = Llama.from_pretrained(
+                    repo_id=_require_repo_id(self._config),
+                    filename=self._config.filename,
+                    n_ctx=self._n_ctx,
+                    n_gpu_layers=self._n_gpu_layers,
+                    n_threads=self._n_threads,
+                    seed=DEFAULT_INFERENCE_SEED,
+                    verbose=False,
+                )
+        return self._model
+
+    def extract(self, text: str) -> str:
+        """Extract entities using the model's documented direct-completion prompt."""
+        prompt = (
+            "Instruction: Identify and tag all named entities in the following text. "
+            "Use BIO format with entity types: PERSON, ORG, LOC.\n\n"
+            f"Input: {text}\n\nResponse: "
+        )
+        result = self._load().create_completion(
+            prompt=prompt,
+            max_tokens=self._max_tokens,
+            temperature=0.1,
+            top_p=1.0,
+            top_k=1,
+            seed=DEFAULT_INFERENCE_SEED,
+        )
+        choices = cast("list[dict[str, object]]", result["choices"])
+        content = choices[0].get("text")
+        if not isinstance(content, str) or not content.strip():
+            msg = "NER model returned empty content"
+            raise RuntimeError(msg)
+        return content
+
+    def close(self) -> None:
+        """Release the underlying GGUF model."""
+        if self._model is not None:
+            self._model.close()
+            self._model = None
+
+
 def _completion_content(result: ChatCompletionDict) -> str:
     choices = cast("list[dict[str, object]]", result["choices"])
     message = cast("dict[str, str | None]", choices[0]["message"])

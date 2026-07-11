@@ -106,6 +106,15 @@ class EmbeddingModel(Protocol):
         ...
 
 
+@runtime_checkable
+class NamedEntityModel(Protocol):
+    """A model specialized for extracting named entities from source text."""
+
+    def extract(self, text: str) -> str:
+        """Return the provider's structured entity extraction output."""
+        ...
+
+
 def user_message(text: str) -> list[Message]:
     """Wrap raw prompt text as a single-turn user message list."""
     return [Message(Role.USER, text)]

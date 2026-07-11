@@ -28,6 +28,7 @@ def _settings():
         local=ModelConfig(provider=Provider.LLAMA, repo_id="local-model"),
         embedding=ModelConfig(provider=Provider.LLAMA, repo_id="embedding-model"),
         specialist=ModelConfig(provider=Provider.LLAMA, repo_id="specialist-model"),
+        ner=ModelConfig(provider=Provider.LLAMA, repo_id="ner-model"),
         cloud=ModelConfig(provider=Provider.FIREWORKS, model="cloud-model"),
         judge=ModelConfig(provider=Provider.FIREWORKS, model="judge-model"),
     )

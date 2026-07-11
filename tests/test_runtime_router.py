@@ -52,6 +52,21 @@ class CloseableFakeChat(FakeChat):
         self.events.append(f"close_{self.prefix}")
 
 
+class FakeNamedEntityModel:
+    def __init__(self, response='{"PER": [], "ORG": [], "LOC": [], "MISC": []}', events=None):
+        self.response = response
+        self.events = events
+        self.calls = []
+
+    def extract(self, text):
+        self.calls.append(text)
+        return self.response
+
+    def close(self):
+        if self.events is not None:
+            self.events.append("close_ner")
+
+
 class FakeCascadeChat(FakeChat):
     def __init__(self, prefix, *, should_escalate=False):
         super().__init__(prefix)
@@ -74,6 +89,7 @@ def _settings():
         local=ModelConfig(provider=Provider.LLAMA, repo_id="local-model"),
         embedding=ModelConfig(provider=Provider.LLAMA, repo_id="embedding-model"),
         specialist=ModelConfig(provider=Provider.LLAMA, repo_id="specialist-model"),
+        ner=ModelConfig(provider=Provider.LLAMA, repo_id="ner-model"),
         cloud=ModelConfig(
             provider=Provider.FIREWORKS,
             model="cloud-model",
@@ -92,17 +108,23 @@ class UnexpectedChatBuildError(AssertionError):
     pass
 
 
-def _context(*, chats=None, chat_factory=None):
+def _context(*, chats=None, chat_factory=None, ner_factory=None):
     if chat_factory is None:
         assert chats is not None
 
         def chat_factory(config):
             return chats[config.provider]
 
+    if ner_factory is None:
+
+        def ner_factory(config):
+            return FakeNamedEntityModel()
+
     return RuntimeContext(
         settings=_settings(),
         embedding_factory=lambda config: FakeEmbedder(),
         chat_factory=chat_factory,
+        ner_factory=ner_factory,
     )
 
 
@@ -341,7 +363,7 @@ def test_summary_category_routes_to_local_specialist_first(tmp_path):
     assert [decision.model for decision in decisions] == ["local-model", "specialist-model"]
 
 
-def test_ner_category_routes_to_local_specialist_first(tmp_path):
+def test_ner_category_routes_to_dedicated_local_model_first(tmp_path):
     weights_path = tmp_path / "router.npz"
     _ner_category_weights(weights_path)
     weights = dict(np.load(weights_path))
@@ -352,12 +374,13 @@ def test_ner_category_routes_to_local_specialist_first(tmp_path):
         weights,
         local_model="local-model",
         specialist_model="specialist-model",
+        ner_model="ner-model",
         cloud_model="cloud-model",
     )
 
     assert decisions[0].category == "named_entity_recognition"
     assert decisions[0].route == LOCAL_ROUTE
-    assert decisions[0].model == "specialist-model"
+    assert decisions[0].model == "ner-model"
 
 
 def test_code_tasks_route_cloud_first(tmp_path):
@@ -583,7 +606,7 @@ def test_specialist_runs_before_local_and_is_released(tmp_path):
     ]
 
 
-def test_ner_specialist_uses_example_format_prompt(tmp_path):
+def test_ner_uses_dedicated_model_and_source_ordered_dates(tmp_path):
     input_path = tmp_path / "tasks.json"
     output_path = tmp_path / "results.json"
     weights_path = tmp_path / "router.npz"
@@ -593,29 +616,29 @@ def test_ner_specialist_uses_example_format_prompt(tmp_path):
             [
                 {
                     "task_id": "ner",
-                    "prompt": "Extract all named entities and their types from: Maria Sanchez joined Fireworks AI.",
+                    "prompt": (
+                        "Extract all named entities and their types from: "
+                        "'On March 15 2023, Sundar Pichai announced Google opened in Zurich.'"
+                    ),
                 }
             ]
         ),
         encoding="utf-8",
     )
-    specialist = FakeChat("specialist")
-
-    def chat_factory(config):
-        if config.repo_id == "specialist-model":
-            return specialist
-        return FakeChat("unused")
+    ner = FakeNamedEntityModel('{"PER":["Sundar Pichai"],"ORG":["Google"],"LOC":["Zurich"],"MISC":[]}')
 
     run_with_context(
         RuntimeOptions(input_path=input_path, output_path=output_path, router_weights=weights_path),
-        _context(chat_factory=chat_factory),
+        _context(chat_factory=lambda config: FakeChat("unused"), ner_factory=lambda config: ner),
     )
 
-    messages = specialist.calls[0]
-    assert len(messages) == 1
-    assert messages[0].role == Role.USER
-    assert "Alice Smith joined AMD in Austin yesterday" in messages[0].content
-    assert "Maria Sanchez joined Fireworks AI" in messages[0].content
+    assert ner.calls == ["On March 15 2023, Sundar Pichai announced Google opened in Zurich."]
+    assert json.loads(output_path.read_text(encoding="utf-8")) == [
+        {
+            "task_id": "ner",
+            "answer": ("March 15 2023: DATE\nSundar Pichai: PERSON\nGoogle: ORGANIZATION\nZurich: LOCATION"),
+        }
+    ]
 
 
 def test_all_known_cloud_categories_disable_thinking(tmp_path):
@@ -787,6 +810,7 @@ def test_regular_and_fast_cloud_token_usage_are_logged_together(tmp_path, capsys
         settings=_settings(),
         embedding_factory=lambda config: FastAndRegularCloudEmbedder(),
         chat_factory=chat_factory,
+        ner_factory=lambda config: FakeNamedEntityModel(),
     )
 
     run_with_context(
@@ -820,6 +844,7 @@ def test_run_releases_embedder_before_building_local_model(tmp_path):
         settings=_settings(),
         embedding_factory=lambda config: ClosingEmbedder(),
         chat_factory=chat_factory,
+        ner_factory=lambda config: FakeNamedEntityModel(),
     )
 
     input_path = tmp_path / "tasks.json"
