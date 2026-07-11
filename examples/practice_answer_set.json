@@ -11,8 +11,8 @@
   },
   {
     "task_id": "practice-03",
-    "answer": "Mixed sentiment.",
-    "notes": "The review is positive about battery life and negative about scratch resistance."
+    "answer": "Neutral sentiment overall: the review is positive about battery life but negative about scratch resistance.",
+    "notes": "Accept neutral or equivalent balanced sentiment if the answer explains both the positive battery life and negative scratch-resistance signals."
   },
   {
     "task_id": "practice-04",

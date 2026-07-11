@@ -210,6 +210,12 @@ class LlamaCppChat:
         except (ImportError, KeyError, TypeError, ValueError):
             return None
 
+    def close(self) -> None:
+        """Release the underlying GGUF model, freeing its memory."""
+        if self._model is not None:
+            self._model.close()
+            self._model = None
+
 
 def _completion_content(result: ChatCompletionDict) -> str:
     choices = cast("list[dict[str, object]]", result["choices"])

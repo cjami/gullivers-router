@@ -14,6 +14,12 @@
 !models/google/
 !models/google/gemma-4-E2B-it-qat-q4_0-gguf/
 !models/google/gemma-4-E2B-it-qat-q4_0-gguf/gemma-4-E2B_q4_0-it.gguf
+!models/Qwen/
+!models/Qwen/Qwen3-Embedding-0.6B-GGUF/
+!models/Qwen/Qwen3-Embedding-0.6B-GGUF/Qwen3-Embedding-0.6B-Q8_0.gguf
+!models/unsloth/
+!models/unsloth/Qwen3-0.6B-GGUF/
+!models/unsloth/Qwen3-0.6B-GGUF/Qwen3-0.6B-Q4_0.gguf
 !models/ggml-org/
 !models/ggml-org/embeddinggemma-300M-GGUF/
 !models/ggml-org/embeddinggemma-300M-GGUF/*Q8_0.gguf

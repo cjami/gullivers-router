@@ -1,9 +1,10 @@
-.PHONY: setup test lint format score-practice
+.PHONY: setup test lint format practice
 
 PRACTICE_TASKS ?= examples/practice_tasks.json
 PRACTICE_RESULTS ?= outputs/results.json
 PRACTICE_ANSWER_SET ?= examples/practice_answer_set.json
 PRACTICE_SCORE ?= outputs/practice_score.json
+PRACTICE_ROUTER_WEIGHTS ?= artifacts/training/router.npz
 
 setup:
 	uv sync
@@ -19,7 +20,11 @@ format:
 	uv run ruff check --fix .
 	uv run ruff format .
 
-score-practice:
+practice:
+	uv run gullivers-router run \
+		--input $(PRACTICE_TASKS) \
+		--output $(PRACTICE_RESULTS) \
+		--router-weights $(PRACTICE_ROUTER_WEIGHTS)
 	uv run gullivers-router score-practice \
 		--tasks $(PRACTICE_TASKS) \
 		--results $(PRACTICE_RESULTS) \

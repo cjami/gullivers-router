@@ -24,6 +24,11 @@ class FakeEmbedder:
         return [1.0] if "cloud" in text else [-1.0]
 
 
+class FastAndRegularCloudEmbedder:
+    def embed(self, text):
+        return [1.0] if "fast" in text else [-1.0]
+
+
 class FakeChat:
     def __init__(self, prefix, *, delay=False):
         self.prefix = prefix
@@ -36,6 +41,15 @@ class FakeChat:
         if self.delay and "slow" in prompt:
             time.sleep(0.02)
         return f"{self.prefix}: {prompt}"
+
+
+class CloseableFakeChat(FakeChat):
+    def __init__(self, prefix, events):
+        super().__init__(prefix)
+        self.events = events
+
+    def close(self):
+        self.events.append(f"close_{self.prefix}")
 
 
 class FakeCascadeChat(FakeChat):
@@ -59,6 +73,7 @@ def _settings():
         hf_token=None,
         local=ModelConfig(provider=Provider.LLAMA, repo_id="local-model"),
         embedding=ModelConfig(provider=Provider.LLAMA, repo_id="embedding-model"),
+        specialist=ModelConfig(provider=Provider.LLAMA, repo_id="specialist-model"),
         cloud=ModelConfig(
             provider=Provider.FIREWORKS,
             model="cloud-model",
@@ -233,6 +248,20 @@ def _cloud_fast_category_weights(path):
     )
 
 
+def _mixed_cloud_usage_weights(path):
+    np.savez(
+        path,
+        weights=np.array([1.0]),
+        bias=np.float64(0.0),
+        alpha=np.float64(0.1),
+        normalize=True,
+        cat_weights=np.array([[1.0], [-1.0]]),
+        cat_bias=np.array([0.0, 0.0]),
+        cat_classes=np.array(["factual_knowledge", "other"]),
+        cat_alpha=np.array([0.1, 0.1]),
+    )
+
+
 def _sentiment_summary_category_weights(path):
     np.savez(
         path,
@@ -244,6 +273,20 @@ def _sentiment_summary_category_weights(path):
         cat_bias=np.array([0.0, 0.0]),
         cat_classes=np.array(["sentiment_classification", "text_summarisation"]),
         cat_alpha=np.array([0.5, 0.1]),
+    )
+
+
+def _ner_category_weights(path):
+    np.savez(
+        path,
+        weights=np.array([1.0]),
+        bias=np.float64(0.0),
+        alpha=np.float64(0.1),
+        normalize=True,
+        cat_weights=np.array([[1.0]]),
+        cat_bias=np.array([1.0]),
+        cat_classes=np.array(["named_entity_recognition"]),
+        cat_alpha=np.array([0.1]),
     )
 
 
@@ -279,7 +322,7 @@ def test_classify_tasks_applies_per_category_thresholds(tmp_path):
     assert [decision.route for decision in decisions] == [LOCAL_ROUTE, CLOUD_ROUTE]
 
 
-def test_sentiment_and_summary_categories_use_threshold_routing(tmp_path):
+def test_summary_category_routes_to_local_specialist_first(tmp_path):
     weights_path = tmp_path / "router.npz"
     _sentiment_summary_category_weights(weights_path)
     weights = dict(np.load(weights_path))
@@ -289,12 +332,32 @@ def test_sentiment_and_summary_categories_use_threshold_routing(tmp_path):
         FakeEmbedder(),
         weights,
         local_model="local-model",
+        specialist_model="specialist-model",
         cloud_model="cloud-model",
     )
 
     assert [decision.category for decision in decisions] == ["sentiment_classification", "text_summarisation"]
-    assert [decision.route for decision in decisions] == [LOCAL_ROUTE, CLOUD_ROUTE]
-    assert [decision.model for decision in decisions] == ["local-model", "cloud-model"]
+    assert [decision.route for decision in decisions] == [LOCAL_ROUTE, LOCAL_ROUTE]
+    assert [decision.model for decision in decisions] == ["local-model", "specialist-model"]
+
+
+def test_ner_category_routes_to_local_specialist_first(tmp_path):
+    weights_path = tmp_path / "router.npz"
+    _ner_category_weights(weights_path)
+    weights = dict(np.load(weights_path))
+
+    decisions = classify_tasks(
+        [Task(task_id="ner", prompt="cloud ner")],
+        FakeEmbedder(),
+        weights,
+        local_model="local-model",
+        specialist_model="specialist-model",
+        cloud_model="cloud-model",
+    )
+
+    assert decisions[0].category == "named_entity_recognition"
+    assert decisions[0].route == LOCAL_ROUTE
+    assert decisions[0].model == "specialist-model"
 
 
 def test_code_generation_routes_cloud_first_but_debugging_uses_threshold(tmp_path):
@@ -454,29 +517,108 @@ def test_answer_prompts_include_category_hints(tmp_path):
         encoding="utf-8",
     )
     chats = {
-        Provider.LLAMA: FakeChat("local"),
-        Provider.FIREWORKS: FakeChat("cloud"),
+        "local-model": FakeChat("local"),
+        "specialist-model": FakeChat("specialist"),
+        "cloud-model": FakeChat("cloud"),
     }
+
+    def chat_factory(config):
+        return chats[config.repo_id or config.model]
 
     run_with_context(
         RuntimeOptions(input_path=input_path, output_path=output_path, router_weights=weights_path),
-        _context(chats=chats),
+        _context(chat_factory=chat_factory),
     )
 
-    sentiment_system = chats[Provider.LLAMA].calls[0][0].content
-    summary_system = chats[Provider.FIREWORKS].calls[0][0].content
+    summary_system = chats["specialist-model"].calls[0][0].content
+    sentiment_system = chats["local-model"].calls[0][0].content
     assert (
-        sentiment_system == "Answer correctly in the fewest words. Obey format; no filler. "
-        "Label positive, negative, or mixed; justify only if asked."
+        sentiment_system == "Answer correctly in the fewest words. No filler. "
+        "Label positive, negative, or neutral; briefly justify."
     )
     assert (
-        summary_system == "Answer correctly in the fewest words. Obey format; no filler. "
-        "Preserve who does what; obey length/format."
+        summary_system == "Answer correctly in the fewest words. No filler. "
+        "Preserve key facts - be concise; obey length/format."
     )
     assert "For " not in sentiment_system
     assert "For " not in summary_system
-    assert chats[Provider.LLAMA].calls[0][-1].content == "local sentiment question"
-    assert chats[Provider.FIREWORKS].calls[0][-1].content == "cloud summary"
+    assert chats["local-model"].calls[0][-1].content == "local sentiment question"
+    assert chats["specialist-model"].calls[0][-1].content == "cloud summary"
+    assert chats["cloud-model"].calls == []
+
+
+def test_specialist_runs_before_local_and_is_released(tmp_path):
+    input_path = tmp_path / "tasks.json"
+    output_path = tmp_path / "results.json"
+    weights_path = tmp_path / "router.npz"
+    _sentiment_summary_category_weights(weights_path)
+    input_path.write_text(
+        json.dumps(
+            [
+                {"task_id": "sentiment", "prompt": "local sentiment question"},
+                {"task_id": "summary", "prompt": "cloud summary"},
+            ]
+        ),
+        encoding="utf-8",
+    )
+    events = []
+    chats = {
+        "local-model": FakeChat("local"),
+        "specialist-model": CloseableFakeChat("specialist", events),
+        "cloud-model": FakeChat("cloud"),
+    }
+
+    def chat_factory(config):
+        name = config.repo_id or config.model
+        events.append(f"build_{name}")
+        return chats[name]
+
+    run_with_context(
+        RuntimeOptions(input_path=input_path, output_path=output_path, router_weights=weights_path),
+        _context(chat_factory=chat_factory),
+    )
+
+    assert events.index("build_specialist-model") < events.index("close_specialist")
+    assert events.index("close_specialist") < events.index("build_local-model")
+    assert json.loads(output_path.read_text(encoding="utf-8")) == [
+        {"task_id": "sentiment", "answer": "local: local sentiment question"},
+        {"task_id": "summary", "answer": "specialist: cloud summary"},
+    ]
+
+
+def test_ner_specialist_uses_example_format_prompt(tmp_path):
+    input_path = tmp_path / "tasks.json"
+    output_path = tmp_path / "results.json"
+    weights_path = tmp_path / "router.npz"
+    _ner_category_weights(weights_path)
+    input_path.write_text(
+        json.dumps(
+            [
+                {
+                    "task_id": "ner",
+                    "prompt": "Extract all named entities and their types from: Maria Sanchez joined Fireworks AI.",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    specialist = FakeChat("specialist")
+
+    def chat_factory(config):
+        if config.repo_id == "specialist-model":
+            return specialist
+        return FakeChat("unused")
+
+    run_with_context(
+        RuntimeOptions(input_path=input_path, output_path=output_path, router_weights=weights_path),
+        _context(chat_factory=chat_factory),
+    )
+
+    messages = specialist.calls[0]
+    assert len(messages) == 1
+    assert messages[0].role == Role.USER
+    assert "Alice Smith joined AMD in Austin yesterday" in messages[0].content
+    assert "Maria Sanchez joined Fireworks AI" in messages[0].content
 
 
 def test_all_known_cloud_categories_disable_thinking(tmp_path):
@@ -601,7 +743,7 @@ def test_local_and_cloud_calls_prepend_concise_system_prompt(tmp_path):
     local_messages = chats[Provider.LLAMA].calls[0]
     assert local_messages[0].role == Role.SYSTEM
     assert local_messages[0].content == cloud_messages[0].content
-    assert local_messages[0].content == "Answer correctly in the fewest words. Obey format; no filler."
+    assert local_messages[0].content == "Answer correctly in the fewest words. No filler."
     assert local_messages[-1].role == Role.USER
     assert local_messages[-1].content == "local factual question"
 
@@ -615,6 +757,50 @@ def test_cloud_token_usage_is_logged(tmp_path, capsys):
     _run_two_tasks(tmp_path, chats)
 
     assert "cloud tokens: prompt=12 completion=3 total=15" in capsys.readouterr().err
+
+
+def test_regular_and_fast_cloud_token_usage_are_logged_together(tmp_path, capsys):
+    input_path = tmp_path / "tasks.json"
+    output_path = tmp_path / "results.json"
+    weights_path = tmp_path / "router.npz"
+    _mixed_cloud_usage_weights(weights_path)
+    input_path.write_text(
+        json.dumps(
+            [
+                {"task_id": "regular", "prompt": "regular cloud question"},
+                {"task_id": "fast", "prompt": "fast cloud question"},
+            ]
+        ),
+        encoding="utf-8",
+    )
+    chats = {
+        "regular": FakeUsageChat("regular", TokenUsage(prompt_tokens=10, completion_tokens=2)),
+        "fast": FakeUsageChat("fast", TokenUsage(prompt_tokens=7, completion_tokens=1)),
+        "local": FakeChat("local"),
+    }
+
+    def chat_factory(config):
+        if config.provider == Provider.LLAMA:
+            return chats["local"]
+        if config.enable_thinking is False and config.reasoning_effort is None and config.temperature == 0.0:
+            return chats["fast"]
+        return chats["regular"]
+
+    context = RuntimeContext(
+        settings=_settings(),
+        embedding_factory=lambda config: FastAndRegularCloudEmbedder(),
+        chat_factory=chat_factory,
+    )
+
+    run_with_context(
+        RuntimeOptions(input_path=input_path, output_path=output_path, router_weights=weights_path),
+        context,
+    )
+
+    err = capsys.readouterr().err
+    assert "cloud regular tokens: prompt=10 completion=2 total=12" in err
+    assert "cloud fast tokens: prompt=7 completion=1 total=8" in err
+    assert "cloud tokens: prompt=17 completion=3 total=20" in err
 
 
 def test_run_releases_embedder_before_building_local_model(tmp_path):

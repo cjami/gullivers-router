@@ -69,7 +69,8 @@ uv run gullivers-router run \
 ## Docker submission smoke test
 
 The Dockerfile builds a CPU-only `linux/amd64` image and includes the local Gemma E2B text
-GGUF, the Qwen3 embedding GGUF used by the router, and `artifacts/training/router.npz`.
+GGUF, the Qwen3 0.6B specialist GGUF, the Qwen3 embedding GGUF used by the router, and
+`artifacts/training/router.npz`.
 
 ```sh
 docker buildx build --platform linux/amd64 --load -t gullivers-router:local .
@@ -96,17 +97,13 @@ This all-local smoke test writes `outputs/results.json` without requiring Firewo
 
 ## Local practice scoring
 
-Use the included practice pack to score routing changes before submitting. First generate answers,
-then grade them with the configured `judge` role:
+Use the included practice pack to score routing changes before submitting:
 
 ```sh
-uv run gullivers-router run \
-  --input examples/practice_tasks.json \
-  --output outputs/results.json \
-  --router-weights artifacts/training/router.npz
-
-make score-practice
+make practice
 ```
+
+This generates answers with the router, then grades them with the configured `judge` role.
 
 The report includes per-task LLM grades and a percentage score. Missing answers are counted as
 incorrect without calling the judge.
@@ -114,7 +111,7 @@ incorrect without calling the judge.
 ## Publishing to GHCR
 
 `.github/workflows/publish-image.yml` builds the CPU image and pushes it to
-`ghcr.io/<owner>/gullivers-router`. It downloads the two GGUFs from HuggingFace (cached
+`ghcr.io/<owner>/gullivers-router`. It downloads the required GGUFs from HuggingFace (cached
 between runs), so the runner does not need them committed.
 
 Cut a release by pushing a tag:
