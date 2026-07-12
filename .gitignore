@@ -43,6 +43,7 @@ artifacts/*
 !artifacts/training/
 artifacts/training/*
 !artifacts/training/router.npz
+!artifacts/training/router_metrics.json
 outputs/
 tmp/
 *.log
