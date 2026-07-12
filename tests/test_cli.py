@@ -81,6 +81,10 @@ def test_score_practice_dispatches_to_practice(monkeypatch):
                 "artifacts/dev/practice_score.json",
                 "--workers",
                 "5",
+                "--timeout-seconds",
+                "12.5",
+                "--attempts",
+                "2",
             ]
         )
         == 0
@@ -93,6 +97,8 @@ def test_score_practice_dispatches_to_practice(monkeypatch):
     assert str(call["answer_set_path"]) == "examples\\practice_answer_set.json"
     assert str(call["output_path"]) == "artifacts\\dev\\practice_score.json"
     assert call["workers"] == 5
+    assert call["timeout_seconds"] == 12.5
+    assert call["max_attempts"] == 2
 
 
 def test_train_dispatches_to_training(monkeypatch):

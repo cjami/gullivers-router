@@ -103,8 +103,20 @@ def _add_score_practice_parser(subparsers: argparse._SubParsersAction) -> None:
     score_parser.add_argument(
         "--workers",
         type=int,
-        default=training.DEFAULT_CONCURRENCY,
+        default=practice.DEFAULT_PRACTICE_WORKERS,
         help="Concurrent judge requests.",
+    )
+    score_parser.add_argument(
+        "--timeout-seconds",
+        type=float,
+        default=practice.DEFAULT_JUDGE_TIMEOUT_SECONDS,
+        help="Timeout for each practice judge request.",
+    )
+    score_parser.add_argument(
+        "--attempts",
+        type=int,
+        default=practice.DEFAULT_JUDGE_ATTEMPTS,
+        help="Maximum attempts for each practice judge request.",
     )
 
 
@@ -197,6 +209,8 @@ def main(argv: list[str] | None = None) -> int:
             answer_set_path=args.answer_set,
             output_path=args.output,
             workers=args.workers,
+            timeout_seconds=args.timeout_seconds,
+            max_attempts=args.attempts,
         )
     elif args.command == "train":
         training.train(

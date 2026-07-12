@@ -1,10 +1,11 @@
 import json
 
 import pytest
+from pydantic import ValidationError
 
 from gullivers_router.config import ModelConfig, Settings
 from gullivers_router.inference.base import Provider, Role
-from gullivers_router.practice import PracticeContext, PracticeOptions, score_practice_with_context
+from gullivers_router.practice import PracticeContext, PracticeGrade, PracticeOptions, score_practice_with_context
 
 
 class FakeJudge:
@@ -18,8 +19,8 @@ class FakeJudge:
         self.calls.append(list(messages))
         submitted_answer = messages[-1].content.split("[Submitted answer]", maxsplit=1)[1]
         if "wrong" in submitted_answer:
-            return response_model(quality="incorrect", score=0.0, rationale="Does not match the reference.")
-        return response_model(quality="correct", score=1.0, rationale="Matches the reference.")
+            return response_model(quality="fail", rationale="Does not match the reference.")
+        return response_model(quality="pass", rationale="Matches the reference.")
 
 
 def _settings():
@@ -36,6 +37,14 @@ def _settings():
 
 def _write_json(path, value):
     path.write_text(json.dumps(value), encoding="utf-8")
+
+
+def test_practice_grade_rejects_partial_credit():
+    with pytest.raises(ValidationError, match="quality"):
+        PracticeGrade(
+            quality="partially_correct",  # ty: ignore[invalid-argument-type]
+            rationale="Close, but incomplete.",
+        )
 
 
 def test_score_practice_writes_summary_and_grades_missing_answers(tmp_path):
@@ -77,9 +86,8 @@ def test_score_practice_writes_summary_and_grades_missing_answers(tmp_path):
     assert scored["summary"]["tasks"] == 3
     assert scored["summary"]["mean_score"] == pytest.approx(1 / 3)
     assert scored["summary"]["percent_score"] == pytest.approx(100 / 3)
-    assert scored["summary"]["correct"] == 1
-    assert scored["summary"]["partially_correct"] == 0
-    assert scored["summary"]["incorrect"] == 2
+    assert scored["summary"]["passed"] == 1
+    assert scored["summary"]["failed"] == 2
     assert [grade["task_id"] for grade in scored["grades"]] == ["a", "b", "c"]
     assert scored["grades"][1]["rationale"] == "No submitted answer was provided."
     assert scored["grades"][2]["rationale"] == "No submitted answer was provided."
@@ -87,6 +95,31 @@ def test_score_practice_writes_summary_and_grades_missing_answers(tmp_path):
     assert judge.calls[0][0].role == Role.SYSTEM
     assert "What is 2 + 2?" in judge.calls[0][-1].content
     assert "Must be numeric." in judge.calls[0][-1].content
+
+
+def test_score_practice_applies_timeout_to_judge(tmp_path):
+    tasks = tmp_path / "tasks.json"
+    results = tmp_path / "results.json"
+    answer_set = tmp_path / "answer_set.json"
+    captured_configs = []
+    _write_json(tasks, [{"task_id": "a", "prompt": "Question?"}])
+    _write_json(results, [{"task_id": "a", "answer": "Answer"}])
+    _write_json(answer_set, [{"task_id": "a", "answer": "Answer"}])
+
+    score_practice_with_context(
+        PracticeOptions(
+            tasks_path=tasks,
+            results_path=results,
+            answer_set_path=answer_set,
+            timeout_seconds=12.5,
+        ),
+        PracticeContext(
+            settings=_settings(),
+            chat_factory=lambda config: captured_configs.append(config) or FakeJudge(),
+        ),
+    )
+
+    assert captured_configs[0].timeout_seconds == 12.5
 
 
 def test_score_practice_rejects_unknown_result_ids(tmp_path):

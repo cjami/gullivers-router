@@ -54,6 +54,7 @@ class OpenAICompatChat:
                 api_key=self._config.api_key,
                 base_url=self._config.base_url,
                 timeout=self._config.timeout_seconds,
+                max_retries=0,
             )
         return self._client
 

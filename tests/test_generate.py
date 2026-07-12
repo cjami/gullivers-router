@@ -90,3 +90,22 @@ def test_complete_with_retry_reraises_after_exhausting_attempts(monkeypatch):
         raise AssertionError
 
     assert model.attempts["x"] == generate.MAX_ATTEMPTS
+
+
+def test_call_with_retry_accepts_custom_attempt_limit(monkeypatch):
+    monkeypatch.setattr(generate.time, "sleep", lambda _seconds: None)
+    attempts = 0
+
+    def fail():
+        nonlocal attempts
+        attempts += 1
+        raise RuntimeError("boom")
+
+    try:
+        generate.call_with_retry(fail, max_attempts=2)
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError
+
+    assert attempts == 2

@@ -102,13 +102,16 @@ def complete_with_retry(model: ChatModel, messages: Sequence[Message]) -> str:
     return call_with_retry(lambda: model.complete(messages))
 
 
-def call_with_retry(operation: Callable[[], RetryResult]) -> RetryResult:
+def call_with_retry(operation: Callable[[], RetryResult], *, max_attempts: int = MAX_ATTEMPTS) -> RetryResult:
     """Run an operation with jittered backoff between transient failures."""
-    for attempt in range(MAX_ATTEMPTS):
+    if max_attempts < 1:
+        msg = "max_attempts must be at least 1"
+        raise ValueError(msg)
+    for attempt in range(max_attempts):
         try:
             return operation()
         except Exception:
-            if attempt + 1 == MAX_ATTEMPTS:
+            if attempt + 1 == max_attempts:
                 raise
             delay = min(_BACKOFF_BASE_SECONDS * 2**attempt, _BACKOFF_CAP_SECONDS)
             time.sleep(delay + random.uniform(0, delay))  # noqa: S311 - jitter, not security
