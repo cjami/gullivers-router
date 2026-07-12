@@ -1,3 +1,5 @@
+![Gulliver's Router cover](gullivers_router_cover.png)
+
 # Gulliver's Router
 
 Gulliver's Router reduces cloud usage by handling suitable prompts locally. It sends work to
