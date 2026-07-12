@@ -57,6 +57,19 @@ requests run concurrently in the background. Both local lanes start with one CPU
 when the NER lane finishes, Gemma takes both threads. Models are released between
 phases to keep memory use within the submission limit.
 
+### Deadline-aware scheduling
+
+Local work is ordered using the prompt length and its risk relative to the learned category
+threshold. Long prompts with plenty of threshold headroom run first because they offer strong
+cloud-token savings. Borderline prompts stay near the back of the queue, where they are cheaper
+to hand off if local inference is slower than expected.
+
+The batch has an eight-minute local deadline, measured from startup. Gemma generation stops at
+the deadline and the current task, together with any queued local work, moves to the concurrent
+cloud pool. Completed local and NER answers are retained, and results are still written in the
+original input order. The deadline can be changed with `--local-deadline-seconds` or disabled
+with a value of `0`.
+
 ## Training the router
 
 We sampled 8,000 real user questions from a
