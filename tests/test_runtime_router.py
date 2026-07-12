@@ -569,10 +569,10 @@ def test_answer_prompts_include_category_hints(tmp_path):
     sentiment_system = chats["local-model"].calls[0][0].content
     summary_system = chats["local-model"].calls[1][0].content
     assert (
-        sentiment_system == "Answer correctly in the fewest words. No filler. "
+        sentiment_system == "Answer correctly and concisely. No filler. "
         "Label positive, negative, or neutral; briefly justify."
     )
-    assert summary_system == "Answer correctly in the fewest words. No filler. Preserve all facts; obey length/format."
+    assert summary_system == ("Answer correctly and concisely. No filler. Preserve all facts; obey length/format.")
     assert "For " not in sentiment_system
     assert "For " not in summary_system
     assert chats["local-model"].calls[0][-1].content == "local sentiment question"
@@ -580,7 +580,7 @@ def test_answer_prompts_include_category_hints(tmp_path):
     assert chats["cloud-model"].calls == []
 
 
-def test_factual_answer_uses_only_concise_system_prompt(tmp_path):
+def test_factual_answer_uses_local_verification_system_prompt(tmp_path):
     input_path = tmp_path / "tasks.json"
     output_path = tmp_path / "results.json"
     weights_path = tmp_path / "router.npz"
@@ -597,7 +597,11 @@ def test_factual_answer_uses_only_concise_system_prompt(tmp_path):
     )
 
     assert local.calls[0][0].role == Role.SYSTEM
-    assert local.calls[0][0].content == "Answer correctly in the fewest words. No filler."
+    assert local.calls[0][0].content == (
+        "Answer correctly and concisely. No filler. "
+        "Answer each part directly. For comparisons, contrast both sides briefly. "
+        "Verify facts and include only requested details."
+    )
 
 
 def test_ner_and_local_run_concurrently_then_promote_threads(tmp_path):
@@ -832,7 +836,7 @@ def _run_two_tasks(tmp_path, chats, *, output_name="results.json"):
     )
 
 
-def test_local_and_cloud_calls_prepend_concise_system_prompt(tmp_path):
+def test_local_and_cloud_calls_use_separate_system_prompts(tmp_path):
     chats = {
         Provider.LLAMA: FakeChat("local"),
         Provider.FIREWORKS: FakeChat("cloud"),
@@ -848,8 +852,8 @@ def test_local_and_cloud_calls_prepend_concise_system_prompt(tmp_path):
 
     local_messages = chats[Provider.LLAMA].calls[0]
     assert local_messages[0].role == Role.SYSTEM
-    assert local_messages[0].content == cloud_messages[0].content
-    assert local_messages[0].content == "Answer correctly in the fewest words. No filler."
+    assert cloud_messages[0].content == "Answer correctly in the fewest words. No filler."
+    assert local_messages[0].content == "Answer correctly and concisely. No filler."
     assert local_messages[-1].role == Role.USER
     assert local_messages[-1].content == "local factual question"
 

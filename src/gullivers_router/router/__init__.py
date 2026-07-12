@@ -45,8 +45,9 @@ LOCAL_ROUTE = "local"
 CLOUD_ROUTE = "cloud"
 DETERMINISTIC_MATH_ROUTE = "deterministic_math"
 
-_CONCISE_SYSTEM_PROMPT = "Answer correctly in the fewest words. No filler."
-_CATEGORY_SYSTEM_HINTS = {
+_CLOUD_SYSTEM_PROMPT = "Answer correctly in the fewest words. No filler."
+_LOCAL_SYSTEM_PROMPT = "Answer correctly and concisely. No filler."
+_CLOUD_CATEGORY_HINTS = {
     "code_debugging": "Identify bug; provide corrected implementation only.",
     "code_generation": "Use requested language; complete function only; no examples unless asked.",
     "logical_reasoning": "Show brief deductions and final answer.",
@@ -54,6 +55,18 @@ _CATEGORY_SYSTEM_HINTS = {
     "named_entity_recognition": "Find all people, organizations, locations, full dates/times; label type.",
     "sentiment_classification": "Label positive, negative, or neutral; briefly justify.",
     "text_summarisation": "Preserve all facts; obey length/format.",
+}
+_LOCAL_CATEGORY_HINTS = {
+    **_CLOUD_CATEGORY_HINTS,
+    "factual_knowledge": (
+        "Answer each part directly. For comparisons, contrast both sides briefly. "
+        "Verify facts and include only requested details."
+    ),
+    "logical_reasoning": (
+        "Use every constraint to derive the answer, then verify the conclusion against the clues. "
+        "Return at most two short reasoning sentences followed by the final answer."
+    ),
+    "mathematical_reasoning": "Use at most four short calculation lines. Verify each operation, then give the answer.",
 }
 _FAST_CLOUD_CATEGORIES = {
     "code_debugging",
@@ -406,7 +419,7 @@ def answer_tasks(  # noqa: PLR0913 - orchestration wires distinct runtime depend
             pool.submit(
                 complete_with_retry,
                 _cloud_model(decision, cloud, cloud_fast),
-                system_and_user_message(_system_prompt(decision), decision.task.prompt),
+                system_and_user_message(_cloud_system_prompt(decision), decision.task.prompt),
             ): decision.task.task_id
             for decision in cloud_decisions
         }
@@ -424,7 +437,9 @@ def answer_tasks(  # noqa: PLR0913 - orchestration wires distinct runtime depend
                     _set_threads(local, local_threads_after_ner)
                     local_threads_promoted = True
                     _log(f"[local] ner lane complete; promoted to {local_threads_after_ner} threads")
-                local_answer = local.complete(system_and_user_message(_system_prompt(decision), decision.task.prompt))
+                local_answer = local.complete(
+                    system_and_user_message(_local_system_prompt(decision), decision.task.prompt)
+                )
                 if (
                     local_cascade
                     and _uses_local_cascade(decision, cascade_margin)
@@ -435,7 +450,7 @@ def answer_tasks(  # noqa: PLR0913 - orchestration wires distinct runtime depend
                         pool.submit(
                             complete_with_retry,
                             _cloud_model(decision, cloud, cloud_fast),
-                            system_and_user_message(_system_prompt(decision), decision.task.prompt),
+                            system_and_user_message(_cloud_system_prompt(decision), decision.task.prompt),
                         )
                     ] = decision.task.task_id
                     continue
@@ -546,11 +561,19 @@ def _fast_cloud_config(config: ModelConfig) -> ModelConfig:
     return replace(config, enable_thinking=False, reasoning_effort=None, temperature=0.0)
 
 
-def _system_prompt(decision: _Decision) -> str:
-    hint = _CATEGORY_SYSTEM_HINTS.get(decision.category or "")
+def _local_system_prompt(decision: _Decision) -> str:
+    return _system_prompt(decision, _LOCAL_SYSTEM_PROMPT, _LOCAL_CATEGORY_HINTS)
+
+
+def _cloud_system_prompt(decision: _Decision) -> str:
+    return _system_prompt(decision, _CLOUD_SYSTEM_PROMPT, _CLOUD_CATEGORY_HINTS)
+
+
+def _system_prompt(decision: _Decision, base: str, hints: dict[str, str]) -> str:
+    hint = hints.get(decision.category or "")
     if hint is None:
-        return _CONCISE_SYSTEM_PROMPT
-    return f"{_CONCISE_SYSTEM_PROMPT} {hint}"
+        return base
+    return f"{base} {hint}"
 
 
 def write_results(path: Path, records: Sequence[dict[str, object]]) -> None:
