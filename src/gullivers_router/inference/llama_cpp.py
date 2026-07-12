@@ -112,10 +112,9 @@ class LlamaCppChat:
     ) -> None:
         """Configure the model; the GGUF loads lazily on first use.
 
-        ``n_gpu_layers`` defaults to offloading every layer for local training. Submission
-        builds override it to zero for CPU-only inference. ``max_tokens`` defaults to unset
-        (unbounded) so training generation is never truncated; runtime builds cap it as a
-        fail-safe against runaway generation.
+        The backend supports GPU offload when requested, while runtime role defaults use CPU-only
+        inference. ``max_tokens`` can remain unset for unbounded training generation; runtime role
+        defaults cap it as a fail-safe against runaway generation.
         """
         self._config = config
         self._n_ctx = n_ctx

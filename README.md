@@ -18,15 +18,15 @@ matches your platform, build from source instead:
 CMAKE_ARGS="-DGGML_VULKAN=on" uv pip install --no-binary llama-cpp-python llama-cpp-python
 ```
 
-Models are downloaded automatically from HuggingFace on first use, using the repo id and
-filename configured per role in `.env` (see `.env.example`). Qwen3 Embedding 0.6B uses
+Models are downloaded automatically from HuggingFace on first use, using each role's built-in
+configuration. Qwen3 Embedding 0.6B uses
 last-token pooling to produce 1024-dimensional vectors. Each role — local generation,
-embeddings, runtime cloud, and the training judge — can point at any supported provider
+summarisation, NER, embeddings, runtime cloud, and the training judge — can point at a supported provider
 (`llama`, `openai`, or `fireworks`).
 
-Local development defaults use the Vulkan llama.cpp wheel and GPU offload. The submission
-Docker image overrides llama.cpp to CPU mode with `LOCAL_N_GPU_LAYERS=0`,
-`LOCAL_N_THREADS=2`, and `LOCAL_N_CTX=2048`.
+Runtime defaults match the CPU-only submission environment and use two llama.cpp threads.
+Local GPU experiments can opt in with role-specific environment overrides such as
+`LOCAL_N_GPU_LAYERS=-1` and `EMBEDDING_N_GPU_LAYERS=-1`.
 
 ## Usage
 

@@ -124,17 +124,18 @@ def test_llama_runtime_options_can_be_configured():
     assert settings.local.model_root == Path("/app/models")
 
 
-def test_llama_runtime_defaults_keep_training_profile():
+def test_llama_runtime_defaults_match_cpu_submission_profile():
     settings = Settings.from_env({})
 
     assert settings.local.n_ctx == 2048
-    assert settings.local.n_gpu_layers == -1
-    assert settings.local.flash_attn is True
+    assert settings.local.n_gpu_layers == 0
+    assert settings.local.flash_attn is False
     assert settings.local.enable_thinking is False
     assert settings.local.temperature == 0.0
     assert settings.local.top_p == 0.95
     assert settings.local.top_k == 64
-    assert settings.local.max_tokens is None
+    assert settings.local.max_tokens == 1024
+    assert settings.local.n_threads == 2
     assert settings.local.model_root == Path("models")
 
 
@@ -145,6 +146,8 @@ def test_embedding_defaults_use_qwen_for_routing_classification():
     assert settings.embedding.filename == "Qwen3-Embedding-0.6B-Q8_0.gguf"
     assert settings.embedding.pooling_type == "last"
     assert settings.embedding.input_prefix == QWEN_ROUTING_PREFIX
+    assert settings.embedding.n_gpu_layers == 0
+    assert settings.embedding.n_threads == 2
 
 
 def test_specialist_defaults_use_qwen_for_local_offload():
@@ -170,7 +173,7 @@ def test_ner_defaults_use_minibase_standard():
     assert settings.ner.repo_id == "Minibase/NER-Standard"
     assert settings.ner.filename == "model.gguf"
     assert settings.ner.n_ctx == 2048
-    assert settings.ner.n_gpu_layers == -1
+    assert settings.ner.n_gpu_layers == 0
     assert settings.ner.max_tokens == 512
     assert settings.ner.n_threads == 2
     assert settings.ner.model_root == Path("models")
