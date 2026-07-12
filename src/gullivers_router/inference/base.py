@@ -85,6 +85,15 @@ class Closeable(Protocol):
 
 
 @runtime_checkable
+class ThreadAdjustable(Protocol):
+    """A local backend whose CPU thread count can change between calls."""
+
+    def set_threads(self, n_threads: int) -> None:
+        """Set generation and prompt-processing threads for subsequent calls."""
+        ...
+
+
+@runtime_checkable
 class StructuredChatModel(ChatModel, Protocol):
     """A chat model that can constrain output to a Pydantic response model."""
 

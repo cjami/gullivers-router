@@ -19,6 +19,7 @@ from gullivers_router.inference.base import (
     Closeable,
     Message,
     Role,
+    ThreadAdjustable,
     TokenUsage,
     UsageReporting,
     system_and_user_message,
@@ -207,8 +208,6 @@ def run_with_context(options: RuntimeOptions, context: RuntimeContext) -> None:
     _release_embedder(embedder)
     _log_rss("after releasing embedder")
 
-    needs_specialist = any(_uses_specialist_model(decision) for decision in decisions)
-    needs_ner = any(_uses_ner_model(decision) for decision in decisions)
     needs_cloud = any(decision.route == CLOUD_ROUTE for decision in decisions)
     cascade_candidates = [decision for decision in decisions if _uses_local_cascade(decision, options.cascade_margin)]
     needs_cascade_cloud = options.local_cascade and bool(cascade_candidates)
@@ -217,8 +216,6 @@ def run_with_context(options: RuntimeOptions, context: RuntimeContext) -> None:
         for decision in decisions
         if decision.route == CLOUD_ROUTE or (options.local_cascade and decision in cascade_candidates)
     ]
-    specialist = context.chat_factory(context.settings.specialist) if needs_specialist else None
-    ner = context.ner_factory(context.settings.ner) if needs_ner else None
     cloud = context.chat_factory(context.settings.cloud) if needs_cloud or needs_cascade_cloud else None
     cloud_fast = (
         context.chat_factory(_fast_cloud_config(context.settings.cloud))
@@ -226,14 +223,22 @@ def run_with_context(options: RuntimeOptions, context: RuntimeContext) -> None:
         and any(_uses_fast_cloud_category(decision) for decision in fast_cloud_candidates)
         else None
     )
+    has_general_lane = any(
+        decision.route == LOCAL_ROUTE and not _uses_specialist_model(decision) and not _uses_ner_model(decision)
+        for decision in decisions
+    )
+    has_specialist_lane = any(_uses_specialist_model(decision) or _uses_ner_model(decision) for decision in decisions)
+    local_threads = context.settings.local.n_threads or 1
+    initial_local_threads = 1 if has_general_lane and has_specialist_lane else local_threads
     answers = answer_tasks(
         decisions,
-        lambda: context.chat_factory(context.settings.local),
-        specialist,
-        ner,
+        lambda: context.chat_factory(replace(context.settings.local, n_threads=initial_local_threads)),
+        lambda: context.chat_factory(_single_threaded(context.settings.specialist)),
+        lambda: context.ner_factory(_single_threaded(context.settings.ner)),
         cloud,
         cloud_fast=cloud_fast,
         workers=options.workers,
+        local_threads_after_specialist=local_threads,
         local_cascade=options.local_cascade,
         cascade_margin=options.cascade_margin,
     )
@@ -376,24 +381,25 @@ class _LocalSelfCheck(BaseModel):
     rationale: str
 
 
-def answer_tasks(  # noqa: C901, PLR0913 - orchestration wires distinct runtime dependencies.
+def answer_tasks(  # noqa: PLR0913 - orchestration wires distinct runtime dependencies.
     decisions: Sequence[_Decision],
     local_factory: Callable[[], ChatModel],
-    specialist: ChatModel | None,
-    ner: NamedEntityModel | None,
+    specialist_factory: Callable[[], ChatModel],
+    ner_factory: Callable[[], NamedEntityModel],
     cloud: ChatModel | None,
     *,
     cloud_fast: ChatModel | None = None,
     workers: int,
+    local_threads_after_specialist: int = 1,
     local_cascade: bool = False,
     cascade_margin: float = DEFAULT_CASCADE_MARGIN,
 ) -> list[tuple[str, str]]:
     """Generate answers for routed tasks, preserving input order.
 
-    Cloud requests are network-bound and dispatched to a thread pool, while the local model is
-    CPU- and memory-bound and runs one prompt at a time in this thread. Both proceed at once, so
-    local inference (and its cold-start load) overlaps the in-flight cloud latency instead of
-    waiting behind it.
+    Cloud requests are network-bound and dispatched to a thread pool. Two single-threaded local
+    lanes run concurrently: the general model in this thread, and NER followed by the summary
+    specialist in a worker. NER is released before the specialist loads so no more than two local
+    models are resident at once.
     """
     ner_decisions = [decision for decision in decisions if _uses_ner_model(decision)]
     specialist_decisions = [decision for decision in decisions if _uses_specialist_model(decision)]
@@ -408,12 +414,16 @@ def answer_tasks(  # noqa: C901, PLR0913 - orchestration wires distinct runtime 
     cascade_label = f", {cascade_count} cascade-eligible" if local_cascade else ""
     _log(
         f"answering {len(ner_decisions)} ner, {len(specialist_decisions)} specialist, {len(local_decisions)} local "
-        f"(sequential{cascade_label}), {len(cloud_decisions)} cloud ({workers} workers), "
+        f"({cascade_label.removeprefix(', ') or 'one-thread lane'}), "
+        f"{len(cloud_decisions)} cloud ({workers} workers), "
         f"{len(direct_decisions)} deterministic"
     )
 
     answers = {decision.task.task_id: str(decision.answer) for decision in direct_decisions}
-    with futures.ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+    with (
+        futures.ThreadPoolExecutor(max_workers=max(1, workers)) as pool,
+        futures.ThreadPoolExecutor(max_workers=1) as specialist_pool,
+    ):
         cloud_futures = {
             pool.submit(
                 complete_with_retry,
@@ -422,50 +432,46 @@ def answer_tasks(  # noqa: C901, PLR0913 - orchestration wires distinct runtime 
             ): decision.task.task_id
             for decision in cloud_decisions
         }
-        for index, decision in enumerate(ner_decisions, start=1):
-            _log(f"[ner {index}/{len(ner_decisions)}] {decision.task.task_id}")
-            if ner is None:
-                msg = "NER model is required for NER-routed tasks"
-                raise RuntimeError(msg)
-            answers[decision.task.task_id] = answer_named_entities(decision.task.prompt, ner)
-
-        if ner_decisions:
-            _release_named_entity_model(ner)
-            _log_rss("after releasing ner")
-
-        for index, decision in enumerate(specialist_decisions, start=1):
-            _log(f"[specialist {index}/{len(specialist_decisions)}] {decision.task.task_id}")
-            if specialist is None:
-                msg = "specialist model is required for specialist-routed tasks"
-                raise RuntimeError(msg)
-            answers[decision.task.task_id] = specialist.complete(_specialist_messages(decision))
-
-        if specialist_decisions:
-            _release_chat_model(specialist)
-            _log_rss("after releasing specialist")
+        specialist_future = specialist_pool.submit(
+            _answer_specialist_lane,
+            ner_decisions,
+            specialist_decisions,
+            ner_factory,
+            specialist_factory,
+        )
 
         local = local_factory() if local_decisions else None
-        for index, decision in enumerate(local_decisions, start=1):
-            _log(f"[local {index}/{len(local_decisions)}] {decision.task.task_id}")
-            if local is None:
-                msg = "local model is required for local-routed tasks"
-                raise RuntimeError(msg)
-            local_answer = local.complete(system_and_user_message(_system_prompt(decision), decision.task.prompt))
-            if (
-                local_cascade
-                and _uses_local_cascade(decision, cascade_margin)
-                and _should_escalate_local_answer(decision, local_answer, local)
-            ):
-                _log(f"[cascade] {decision.task.task_id}: self-check escalated to cloud")
-                cloud_futures[
-                    pool.submit(
-                        complete_with_retry,
-                        _cloud_model(decision, cloud, cloud_fast),
-                        system_and_user_message(_system_prompt(decision), decision.task.prompt),
-                    )
-                ] = decision.task.task_id
-                continue
-            answers[decision.task.task_id] = local_answer
+        local_threads_promoted = False
+        try:
+            for index, decision in enumerate(local_decisions, start=1):
+                _log(f"[local {index}/{len(local_decisions)}] {decision.task.task_id}")
+                if local is None:
+                    msg = "local model is required for local-routed tasks"
+                    raise RuntimeError(msg)
+                if not local_threads_promoted and specialist_future.done():
+                    _set_threads(local, local_threads_after_specialist)
+                    local_threads_promoted = True
+                    _log(f"[local] specialist lane complete; promoted to {local_threads_after_specialist} threads")
+                local_answer = local.complete(system_and_user_message(_system_prompt(decision), decision.task.prompt))
+                if (
+                    local_cascade
+                    and _uses_local_cascade(decision, cascade_margin)
+                    and _should_escalate_local_answer(decision, local_answer, local)
+                ):
+                    _log(f"[cascade] {decision.task.task_id}: self-check escalated to cloud")
+                    cloud_futures[
+                        pool.submit(
+                            complete_with_retry,
+                            _cloud_model(decision, cloud, cloud_fast),
+                            system_and_user_message(_system_prompt(decision), decision.task.prompt),
+                        )
+                    ] = decision.task.task_id
+                    continue
+                answers[decision.task.task_id] = local_answer
+        finally:
+            _release_chat_model(local)
+
+        answers.update(specialist_future.result())
 
         total_cloud = len(cloud_futures)
         for completed, future in enumerate(futures.as_completed(cloud_futures), start=1):
@@ -477,6 +483,50 @@ def answer_tasks(  # noqa: C901, PLR0913 - orchestration wires distinct runtime 
         _log_cloud_usage(cloud, cloud_fast)
 
     return [(decision.task.task_id, answers[decision.task.task_id]) for decision in decisions]
+
+
+def _answer_specialist_lane(
+    ner_decisions: Sequence[_Decision],
+    specialist_decisions: Sequence[_Decision],
+    ner_factory: Callable[[], NamedEntityModel],
+    specialist_factory: Callable[[], ChatModel],
+) -> dict[str, str]:
+    answers: dict[str, str] = {}
+    ner = ner_factory() if ner_decisions else None
+    try:
+        for index, decision in enumerate(ner_decisions, start=1):
+            _log(f"[ner {index}/{len(ner_decisions)}] {decision.task.task_id}")
+            if ner is None:
+                msg = "NER model is required for NER-routed tasks"
+                raise RuntimeError(msg)
+            answers[decision.task.task_id] = answer_named_entities(decision.task.prompt, ner)
+    finally:
+        _release_named_entity_model(ner)
+    if ner_decisions:
+        _log_rss("after releasing ner")
+
+    specialist = specialist_factory() if specialist_decisions else None
+    try:
+        for index, decision in enumerate(specialist_decisions, start=1):
+            _log(f"[specialist {index}/{len(specialist_decisions)}] {decision.task.task_id}")
+            if specialist is None:
+                msg = "specialist model is required for specialist-routed tasks"
+                raise RuntimeError(msg)
+            answers[decision.task.task_id] = specialist.complete(_specialist_messages(decision))
+    finally:
+        _release_chat_model(specialist)
+    if specialist_decisions:
+        _log_rss("after releasing specialist")
+    return answers
+
+
+def _single_threaded(config: ModelConfig) -> ModelConfig:
+    return replace(config, n_threads=1)
+
+
+def _set_threads(model: ChatModel, n_threads: int) -> None:
+    if isinstance(model, ThreadAdjustable):
+        model.set_threads(n_threads)
 
 
 def _cloud_model(decision: _Decision, cloud: ChatModel | None, cloud_fast: ChatModel | None) -> ChatModel:

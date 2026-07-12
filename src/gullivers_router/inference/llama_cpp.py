@@ -128,6 +128,7 @@ class LlamaCppChat:
                     n_gpu_layers=self._n_gpu_layers,
                     flash_attn=self._flash_attn,
                     n_threads=self._n_threads,
+                    n_threads_batch=self._n_threads,
                     seed=DEFAULT_INFERENCE_SEED,
                     verbose=False,
                 )
@@ -139,6 +140,7 @@ class LlamaCppChat:
                     n_gpu_layers=self._n_gpu_layers,
                     flash_attn=self._flash_attn,
                     n_threads=self._n_threads,
+                    n_threads_batch=self._n_threads,
                     seed=DEFAULT_INFERENCE_SEED,
                     verbose=False,
                 )
@@ -148,6 +150,17 @@ class LlamaCppChat:
         """Generate a response for a single prompt."""
         result = self._create_chat_completion({"messages": [m.as_dict() for m in messages]})
         return _completion_content(result)
+
+    def set_threads(self, n_threads: int) -> None:
+        """Set llama.cpp worker counts for completions after the current call."""
+        if n_threads < 1:
+            msg = "n_threads must be at least 1"
+            raise ValueError(msg)
+        self._n_threads = n_threads
+        if self._model is not None:
+            from llama_cpp import llama_cpp
+
+            llama_cpp.llama_set_n_threads(self._model.ctx, n_threads, n_threads)
 
     def complete_structured(
         self,
@@ -250,6 +263,7 @@ class LlamaCppNamedEntity:
                     n_ctx=self._n_ctx,
                     n_gpu_layers=self._n_gpu_layers,
                     n_threads=self._n_threads,
+                    n_threads_batch=self._n_threads,
                     seed=DEFAULT_INFERENCE_SEED,
                     verbose=False,
                 )
@@ -260,6 +274,7 @@ class LlamaCppNamedEntity:
                     n_ctx=self._n_ctx,
                     n_gpu_layers=self._n_gpu_layers,
                     n_threads=self._n_threads,
+                    n_threads_batch=self._n_threads,
                     seed=DEFAULT_INFERENCE_SEED,
                     verbose=False,
                 )

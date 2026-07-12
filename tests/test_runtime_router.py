@@ -1,5 +1,6 @@
 import json
 import time
+from threading import Barrier
 
 import numpy as np
 import pytest
@@ -13,6 +14,8 @@ from gullivers_router.router import (
     RuntimeContext,
     RuntimeOptions,
     Task,
+    _answer_specialist_lane,
+    _Decision,
     classify_tasks,
     load_tasks,
     run_with_context,
@@ -86,7 +89,7 @@ class FakeCascadeChat(FakeChat):
 def _settings():
     return Settings(
         hf_token=None,
-        local=ModelConfig(provider=Provider.LLAMA, repo_id="local-model"),
+        local=ModelConfig(provider=Provider.LLAMA, repo_id="local-model", n_threads=2),
         embedding=ModelConfig(provider=Provider.LLAMA, repo_id="embedding-model"),
         specialist=ModelConfig(provider=Provider.LLAMA, repo_id="specialist-model"),
         ner=ModelConfig(provider=Provider.LLAMA, repo_id="ner-model"),
@@ -587,7 +590,7 @@ def test_factual_answer_uses_only_concise_system_prompt(tmp_path):
     assert local.calls[0][0].content == "Answer correctly in the fewest words. No filler."
 
 
-def test_specialist_runs_before_local_and_is_released(tmp_path):
+def test_specialist_and_local_run_concurrently_with_one_thread_and_are_released(tmp_path):
     input_path = tmp_path / "tasks.json"
     output_path = tmp_path / "results.json"
     weights_path = tmp_path / "router.npz"
@@ -596,21 +599,37 @@ def test_specialist_runs_before_local_and_is_released(tmp_path):
         json.dumps(
             [
                 {"task_id": "sentiment", "prompt": "local sentiment question"},
+                {"task_id": "sentiment-2", "prompt": "second local sentiment question"},
                 {"task_id": "summary", "prompt": "cloud summary"},
             ]
         ),
         encoding="utf-8",
     )
     events = []
+    barrier = Barrier(2)
+
+    class ConcurrentChat(CloseableFakeChat):
+        def complete(self, messages):
+            if not self.calls:
+                barrier.wait(timeout=1)
+                if self.prefix == "local":
+                    time.sleep(0.02)
+            return super().complete(messages)
+
+        def set_threads(self, n_threads):
+            events.append(f"threads_{self.prefix}_{n_threads}")
+
     chats = {
-        "local-model": FakeChat("local"),
-        "specialist-model": CloseableFakeChat("specialist", events),
+        "local-model": ConcurrentChat("local", events),
+        "specialist-model": ConcurrentChat("specialist", events),
         "cloud-model": FakeChat("cloud"),
     }
+    threads = {}
 
     def chat_factory(config):
         name = config.repo_id or config.model
         events.append(f"build_{name}")
+        threads[name] = config.n_threads
         return chats[name]
 
     run_with_context(
@@ -619,11 +638,49 @@ def test_specialist_runs_before_local_and_is_released(tmp_path):
     )
 
     assert events.index("build_specialist-model") < events.index("close_specialist")
-    assert events.index("close_specialist") < events.index("build_local-model")
+    assert events.index("build_local-model") < events.index("close_local")
+    assert threads["specialist-model"] == 1
+    assert threads["local-model"] == 1
+    assert "threads_local_2" in events
     assert json.loads(output_path.read_text(encoding="utf-8")) == [
         {"task_id": "sentiment", "answer": "local: local sentiment question"},
+        {"task_id": "sentiment-2", "answer": "local: second local sentiment question"},
         {"task_id": "summary", "answer": "specialist: cloud summary"},
     ]
+
+
+def test_specialist_lane_releases_ner_before_building_summary_model():
+    events = []
+    ner_decision = _Decision(
+        task=Task("ner", "Extract entities from: 'Ada Lovelace visited London.'"),
+        route=LOCAL_ROUTE,
+        risk=0.1,
+        threshold=0.5,
+        model="ner-model",
+        category="named_entity_recognition",
+    )
+    summary_decision = _Decision(
+        task=Task("summary", "Summarize this passage."),
+        route=LOCAL_ROUTE,
+        risk=0.1,
+        threshold=0.5,
+        model="specialist-model",
+        category="text_summarisation",
+    )
+
+    def ner_factory():
+        events.append("build_ner")
+        return FakeNamedEntityModel('{"PER": ["Ada Lovelace"], "ORG": [], "LOC": ["London"]}', events)
+
+    def specialist_factory():
+        events.append("build_specialist")
+        return CloseableFakeChat("specialist", events)
+
+    answers = _answer_specialist_lane([ner_decision], [summary_decision], ner_factory, specialist_factory)
+
+    assert events == ["build_ner", "close_ner", "build_specialist", "close_specialist"]
+    assert answers["ner"] == "Ada Lovelace: PERSON\nLondon: LOCATION"
+    assert answers["summary"] == "specialist: Summarize this passage."
 
 
 def test_ner_uses_dedicated_model_and_source_ordered_dates(tmp_path):
@@ -646,13 +703,19 @@ def test_ner_uses_dedicated_model_and_source_ordered_dates(tmp_path):
         encoding="utf-8",
     )
     ner = FakeNamedEntityModel('{"PER":["Sundar Pichai"],"ORG":["Google"],"LOC":["Zurich"],"MISC":[]}')
+    ner_threads = []
+
+    def ner_factory(config):
+        ner_threads.append(config.n_threads)
+        return ner
 
     run_with_context(
         RuntimeOptions(input_path=input_path, output_path=output_path, router_weights=weights_path),
-        _context(chat_factory=lambda config: FakeChat("unused"), ner_factory=lambda config: ner),
+        _context(chat_factory=lambda config: FakeChat("unused"), ner_factory=ner_factory),
     )
 
     assert ner.calls == ["On March 15 2023, Sundar Pichai announced Google opened in Zurich."]
+    assert ner_threads == [1]
     assert json.loads(output_path.read_text(encoding="utf-8")) == [
         {
             "task_id": "ner",

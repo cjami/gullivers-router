@@ -202,6 +202,46 @@ def test_llama_chat_loads_with_global_seed(monkeypatch):
     assert captured["top_k"] == 64
 
 
+def test_llama_chat_updates_threads_after_loading(monkeypatch):
+    captured = {}
+    thread_changes = []
+
+    class FakeLlama:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+            self.ctx = object()
+
+        @classmethod
+        def from_pretrained(cls, **kwargs) -> "FakeLlama":
+            return cls(**kwargs)
+
+        def create_chat_completion(self, **_kwargs):
+            return {"choices": [{"message": {"content": "ok"}}]}
+
+    low_level = SimpleNamespace(
+        llama_set_n_threads=lambda _ctx, n_threads, n_threads_batch: thread_changes.append((n_threads, n_threads_batch))
+    )
+    monkeypatch.setitem(sys.modules, "llama_cpp", SimpleNamespace(Llama=FakeLlama, llama_cpp=low_level))
+    chat = LlamaCppChat(
+        _cfg(Provider.LLAMA, repo_id="repo", filename="model.gguf"),
+        n_threads=1,
+    )
+
+    assert chat.complete([Message(Role.USER, "hello")]) == "ok"
+    chat.set_threads(2)
+
+    assert captured["n_threads"] == 1
+    assert captured["n_threads_batch"] == 1
+    assert thread_changes == [(2, 2)]
+
+
+def test_llama_chat_rejects_invalid_thread_count():
+    chat = LlamaCppChat(_cfg(Provider.LLAMA, repo_id="repo", filename="model.gguf"))
+
+    with pytest.raises(ValueError, match="at least 1"):
+        chat.set_threads(0)
+
+
 def test_llama_named_entity_model_uses_direct_deterministic_completion(monkeypatch):
     captured = {}
 
