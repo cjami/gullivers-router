@@ -5,10 +5,10 @@
 Gulliver's Router reduces cloud usage by handling suitable prompts locally. It sends work to
 the cloud when the expected improvement in answer quality justifies the extra cost.
 
-The decision comes from classifiers trained on judged local and cloud responses. They estimate
-the risk of a weak local answer and identify the task category, which also lets the runtime use
-specialist paths for named entities and arithmetic. The runtime is designed for
-resource-constrained environments.
+Under the hood, it uses small classifiers trained on judged local and cloud responses. They flag
+prompts where the local model is likely to fall short, identify the task category, and let the
+runtime use specialist paths for jobs like named entity extraction and arithmetic. The result is
+a router that stays practical for resource-constrained environments.
 
 This was built for the AMD Developer Hackathon: ACT II.
 
