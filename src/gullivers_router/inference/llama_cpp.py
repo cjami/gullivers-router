@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from importlib import import_module
@@ -10,7 +11,7 @@ from pathlib import Path
 from threading import Lock
 from typing import TYPE_CHECKING, cast
 
-from gullivers_router.inference.base import DEFAULT_INFERENCE_SEED
+from gullivers_router.inference.base import DEFAULT_INFERENCE_SEED, InferenceDeadlineExceededError
 from gullivers_router.inference.structured import llama_cpp_json_schema_response_format, strip_thinking_sections
 from gullivers_router.inference.truncation import EMBEDDING_CONTEXT_LIMIT, truncate_head_tail
 
@@ -166,6 +167,28 @@ class LlamaCppChat:
         result = self._create_chat_completion({"messages": [m.as_dict() for m in messages]})
         return _completion_content(result)
 
+    def complete_before(self, messages: Sequence[Message], deadline: float) -> str:
+        """Generate a response, stopping once the monotonic deadline is reached."""
+        if time.monotonic() >= deadline:
+            raise InferenceDeadlineExceededError
+
+        from llama_cpp import StoppingCriteriaList
+
+        deadline_reached = False
+
+        def stop_at_deadline(_input_ids: object, _logits: object) -> bool:
+            nonlocal deadline_reached
+            deadline_reached = time.monotonic() >= deadline
+            return deadline_reached
+
+        result = self._create_chat_completion(
+            {"messages": [m.as_dict() for m in messages]},
+            stopping_criteria=StoppingCriteriaList([stop_at_deadline]),
+        )
+        if deadline_reached or time.monotonic() >= deadline:
+            raise InferenceDeadlineExceededError
+        return _completion_content(result)
+
     def set_threads(self, n_threads: int) -> None:
         """Set llama.cpp worker counts for completions after the current call."""
         if n_threads < 1:
@@ -192,9 +215,16 @@ class LlamaCppChat:
         content = _completion_content(result)
         return response_model.model_validate_json(content)
 
-    def _create_chat_completion(self, payload: ChatCompletionDict) -> ChatCompletionDict:
+    def _create_chat_completion(
+        self,
+        payload: ChatCompletionDict,
+        *,
+        stopping_criteria: object | None = None,
+    ) -> ChatCompletionDict:
         model = self._load()
         payload = {**payload, **self._sampling_payload()}
+        if stopping_criteria is not None:
+            payload["stopping_criteria"] = stopping_criteria
         if self._enable_thinking is None or not self._template_supports_enable_thinking(model):
             return cast(ChatCompletionDict, model.create_chat_completion(**payload))
 

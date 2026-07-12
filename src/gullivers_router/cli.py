@@ -69,6 +69,12 @@ def _add_run_parser(subparsers: argparse._SubParsersAction) -> None:
         default=router.DEFAULT_CASCADE_MARGIN,
         help="Risk margin below the routing threshold that still gets local cascade checks.",
     )
+    run_parser.add_argument(
+        "--local-deadline-seconds",
+        type=float,
+        default=router.DEFAULT_LOCAL_DEADLINE_SECONDS,
+        help="Eject pending local tasks to cloud after this many seconds; 0 disables.",
+    )
 
 
 def _add_score_practice_parser(subparsers: argparse._SubParsersAction) -> None:
@@ -201,6 +207,7 @@ def main(argv: list[str] | None = None) -> int:
             classify_only=args.classify_only,
             local_cascade=args.local_cascade,
             cascade_margin=args.cascade_margin,
+            local_deadline_seconds=args.local_deadline_seconds,
         )
     elif args.command == "score-practice":
         practice.score_practice(

@@ -65,6 +65,19 @@ class ChatModel(Protocol):
         ...
 
 
+class InferenceDeadlineExceededError(TimeoutError):
+    """Raised when local generation reaches its runtime deadline."""
+
+
+@runtime_checkable
+class DeadlineAwareChatModel(Protocol):
+    """A local model that can stop generation at an absolute deadline."""
+
+    def complete_before(self, messages: Sequence[Message], deadline: float) -> str:
+        """Return an answer or raise when the monotonic deadline is reached."""
+        ...
+
+
 @runtime_checkable
 class UsageReporting(Protocol):
     """A model that reports cumulative token usage across its calls."""

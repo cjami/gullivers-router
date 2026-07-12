@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from gullivers_router.config import ModelConfig, Settings
-from gullivers_router.inference.base import Provider, Role, TokenUsage
+from gullivers_router.inference.base import InferenceDeadlineExceededError, Provider, Role, TokenUsage
 from gullivers_router.router import (
     CLOUD_ROUTE,
     DETERMINISTIC_MATH_ROUTE,
@@ -16,6 +16,7 @@ from gullivers_router.router import (
     Task,
     _answer_ner_lane,
     _Decision,
+    _order_local_decisions,
     classify_tasks,
     load_tasks,
     run_with_context,
@@ -84,6 +85,21 @@ class FakeCascadeChat(FakeChat):
             failure_mode="reasoning_uncertain" if self.should_escalate else "none",
             rationale="test",
         )
+
+
+class DeadlineFakeChat(FakeChat):
+    def __init__(self, prefix, *, fail_on=None):
+        super().__init__(prefix)
+        self.fail_on = fail_on
+        self.deadlines = []
+
+    def complete_before(self, messages, deadline):
+        self.calls.append(list(messages))
+        self.deadlines.append(deadline)
+        prompt = messages[-1].content
+        if prompt == self.fail_on:
+            raise InferenceDeadlineExceededError
+        return f"{self.prefix}: {prompt}"
 
 
 def _settings():
@@ -537,6 +553,90 @@ def test_local_cascade_self_check_can_escalate_after_local_answer(tmp_path):
     ]
     assert len(local.structured_calls) == 1
     assert len(local.calls) == 1
+
+
+def test_local_deadline_ejects_current_and_pending_tasks_to_cloud(tmp_path):
+    input_path = tmp_path / "tasks.json"
+    output_path = tmp_path / "results.json"
+    weights_path = tmp_path / "router.npz"
+    _weights(weights_path)
+    input_path.write_text(
+        json.dumps(
+            [
+                {"task_id": "a", "prompt": "first1"},
+                {"task_id": "b", "prompt": "second"},
+                {"task_id": "c", "prompt": "third1"},
+            ]
+        ),
+        encoding="utf-8",
+    )
+    local = DeadlineFakeChat("local", fail_on="second")
+    cloud = FakeChat("cloud")
+
+    run_with_context(
+        RuntimeOptions(
+            input_path=input_path,
+            output_path=output_path,
+            router_weights=weights_path,
+            local_deadline_seconds=540,
+        ),
+        _context(chats={Provider.LLAMA: local, Provider.FIREWORKS: cloud}),
+    )
+
+    assert json.loads(output_path.read_text(encoding="utf-8")) == [
+        {"task_id": "a", "answer": "local: first1"},
+        {"task_id": "b", "answer": "cloud: second"},
+        {"task_id": "c", "answer": "cloud: third1"},
+    ]
+    assert [call[-1].content for call in local.calls] == ["first1", "second"]
+    assert len(local.deadlines) == 2
+    assert len(set(local.deadlines)) == 1
+    assert sorted(call[-1].content for call in cloud.calls) == ["second", "third1"]
+
+
+def test_local_order_prioritizes_prompt_length_and_threshold_headroom():
+    decisions = [
+        _Decision(
+            Task("factual", "Short fact"),
+            LOCAL_ROUTE,
+            0.1,
+            0.5,
+            "local",
+            "factual_knowledge",
+        ),
+        _Decision(
+            Task("summary", "Long source passage " * 50),
+            LOCAL_ROUTE,
+            0.1,
+            0.5,
+            "local",
+            "text_summarisation",
+        ),
+        _Decision(
+            Task("sentiment", "Short review"),
+            LOCAL_ROUTE,
+            0.2,
+            0.5,
+            "local",
+            "sentiment_classification",
+        ),
+    ]
+
+    assert [decision.task.task_id for decision in _order_local_decisions(decisions)] == [
+        "summary",
+        "factual",
+        "sentiment",
+    ]
+
+
+def test_local_order_uses_category_threshold_headroom():
+    borderline = _Decision(Task("borderline", "same prompt"), LOCAL_ROUTE, 0.2, 0.21, "local", "factual")
+    safe = _Decision(Task("safe", "same prompt"), LOCAL_ROUTE, 0.2, 0.8, "local", "mathematical")
+
+    assert [decision.task.task_id for decision in _order_local_decisions([borderline, safe])] == [
+        "safe",
+        "borderline",
+    ]
 
 
 def test_answer_prompts_include_category_hints(tmp_path):

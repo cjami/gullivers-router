@@ -6,6 +6,7 @@ import gc
 import json
 import os
 import sys
+import time
 from concurrent import futures
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -17,6 +18,8 @@ from pydantic import BaseModel, Field
 from gullivers_router.config import Settings
 from gullivers_router.inference.base import (
     Closeable,
+    DeadlineAwareChatModel,
+    InferenceDeadlineExceededError,
     Message,
     Role,
     ThreadAdjustable,
@@ -41,6 +44,7 @@ DEFAULT_INPUT = Path("examples/practice_tasks.json")
 DEFAULT_OUTPUT = Path("outputs/results.json")
 DEFAULT_ROUTER_WEIGHTS = Path("artifacts/training/router.npz")
 DEFAULT_CASCADE_MARGIN = 0.10
+DEFAULT_LOCAL_DEADLINE_SECONDS = 480.0
 LOCAL_ROUTE = "local"
 CLOUD_ROUTE = "cloud"
 DETERMINISTIC_MATH_ROUTE = "deterministic_math"
@@ -101,6 +105,7 @@ _LOCAL_SELF_CHECK_SYSTEM_PROMPT = (
 __all__ = [
     "CLOUD_ROUTE",
     "DEFAULT_INPUT",
+    "DEFAULT_LOCAL_DEADLINE_SECONDS",
     "DEFAULT_OUTPUT",
     "DEFAULT_ROUTER_WEIGHTS",
     "DETERMINISTIC_MATH_ROUTE",
@@ -143,6 +148,7 @@ class RuntimeOptions:
     classify_only: bool = False
     local_cascade: bool = False
     cascade_margin: float = DEFAULT_CASCADE_MARGIN
+    local_deadline_seconds: float | None = DEFAULT_LOCAL_DEADLINE_SECONDS
 
 
 @dataclass(frozen=True, slots=True)
@@ -164,6 +170,7 @@ def run(  # noqa: PLR0913 - CLI options are passed through explicitly.
     classify_only: bool = False,
     local_cascade: bool = False,
     cascade_margin: float = DEFAULT_CASCADE_MARGIN,
+    local_deadline_seconds: float | None = DEFAULT_LOCAL_DEADLINE_SECONDS,
 ) -> None:
     """Run the batch router."""
     run_with_context(
@@ -175,6 +182,7 @@ def run(  # noqa: PLR0913 - CLI options are passed through explicitly.
             classify_only=classify_only,
             local_cascade=local_cascade,
             cascade_margin=cascade_margin,
+            local_deadline_seconds=local_deadline_seconds,
         ),
         RuntimeContext(
             settings=Settings.from_env(),
@@ -187,6 +195,8 @@ def run(  # noqa: PLR0913 - CLI options are passed through explicitly.
 
 def run_with_context(options: RuntimeOptions, context: RuntimeContext) -> None:
     """Run the batch router with explicit dependencies."""
+    started_at = time.monotonic()
+    deadline_at = _deadline_at(started_at, options.local_deadline_seconds)
     tasks = load_tasks(options.input_path)
     _log(f"loaded {len(tasks)} tasks <- {options.input_path}")
     local_model = _model_name(context.settings.local)
@@ -213,23 +223,26 @@ def run_with_context(options: RuntimeOptions, context: RuntimeContext) -> None:
     _release_embedder(embedder)
     _log_rss("after releasing embedder")
 
+    has_general_lane = any(decision.route == LOCAL_ROUTE and not _uses_ner_model(decision) for decision in decisions)
+    has_ner_lane = any(_uses_ner_model(decision) for decision in decisions)
     needs_cloud = any(decision.route == CLOUD_ROUTE for decision in decisions)
     cascade_candidates = [decision for decision in decisions if _uses_local_cascade(decision, options.cascade_margin)]
     needs_cascade_cloud = options.local_cascade and bool(cascade_candidates)
+    needs_deadline_cloud = deadline_at is not None and has_general_lane
     fast_cloud_candidates = [
         decision
         for decision in decisions
-        if decision.route == CLOUD_ROUTE or (options.local_cascade and decision in cascade_candidates)
+        if decision.route == CLOUD_ROUTE
+        or (options.local_cascade and decision in cascade_candidates)
+        or (needs_deadline_cloud and decision.route == LOCAL_ROUTE and not _uses_ner_model(decision))
     ]
-    cloud = context.chat_factory(context.settings.cloud) if needs_cloud or needs_cascade_cloud else None
+    needs_cloud_client = needs_cloud or needs_cascade_cloud or needs_deadline_cloud
+    cloud = context.chat_factory(context.settings.cloud) if needs_cloud_client else None
     cloud_fast = (
         context.chat_factory(_fast_cloud_config(context.settings.cloud))
-        if (needs_cloud or needs_cascade_cloud)
-        and any(_uses_fast_cloud_category(decision) for decision in fast_cloud_candidates)
+        if needs_cloud_client and any(_uses_fast_cloud_category(decision) for decision in fast_cloud_candidates)
         else None
     )
-    has_general_lane = any(decision.route == LOCAL_ROUTE and not _uses_ner_model(decision) for decision in decisions)
-    has_ner_lane = any(_uses_ner_model(decision) for decision in decisions)
     local_threads = context.settings.local.n_threads or 1
     initial_local_threads = 1 if has_general_lane and has_ner_lane else local_threads
     answers = answer_tasks(
@@ -242,6 +255,7 @@ def run_with_context(options: RuntimeOptions, context: RuntimeContext) -> None:
         local_cascade=options.local_cascade,
         cascade_margin=options.cascade_margin,
         local_threads_after_ner=local_threads,
+        deadline_at=deadline_at,
     )
     _log_rss("after answering")
     _log(f"writing {len(answers)} answers -> {options.output_path}")
@@ -389,6 +403,7 @@ def answer_tasks(  # noqa: PLR0913 - orchestration wires distinct runtime depend
     local_cascade: bool = False,
     cascade_margin: float = DEFAULT_CASCADE_MARGIN,
     local_threads_after_ner: int = 1,
+    deadline_at: float | None = None,
 ) -> list[tuple[str, str]]:
     """Generate answers for routed tasks, preserving input order.
 
@@ -399,6 +414,7 @@ def answer_tasks(  # noqa: PLR0913 - orchestration wires distinct runtime depend
     local_decisions = [
         decision for decision in decisions if decision.route == LOCAL_ROUTE and not _uses_ner_model(decision)
     ]
+    local_decisions = _order_local_decisions(local_decisions)
     cloud_decisions = [decision for decision in decisions if decision.route == CLOUD_ROUTE]
     direct_decisions = [decision for decision in decisions if decision.route == DETERMINISTIC_MATH_ROUTE]
     cascade_count = sum(1 for decision in local_decisions if _uses_local_cascade(decision, cascade_margin))
@@ -415,48 +431,31 @@ def answer_tasks(  # noqa: PLR0913 - orchestration wires distinct runtime depend
         futures.ThreadPoolExecutor(max_workers=max(1, workers)) as pool,
         futures.ThreadPoolExecutor(max_workers=1) as ner_pool,
     ):
-        cloud_futures = {
-            pool.submit(
+        cloud_futures: dict[futures.Future[str], str] = {}
+
+        def submit_cloud(decision: _Decision) -> None:
+            future = pool.submit(
                 complete_with_retry,
                 _cloud_model(decision, cloud, cloud_fast),
                 system_and_user_message(_cloud_system_prompt(decision), decision.task.prompt),
-            ): decision.task.task_id
-            for decision in cloud_decisions
-        }
+            )
+            cloud_futures[future] = decision.task.task_id
+
+        for decision in cloud_decisions:
+            submit_cloud(decision)
         ner_future = ner_pool.submit(_answer_ner_lane, ner_decisions, ner_factory)
 
-        local = local_factory() if local_decisions else None
-        local_threads_promoted = False
-        try:
-            for index, decision in enumerate(local_decisions, start=1):
-                _log(f"[local {index}/{len(local_decisions)}] {decision.task.task_id}")
-                if local is None:
-                    msg = "local model is required for local-routed tasks"
-                    raise RuntimeError(msg)
-                if not local_threads_promoted and ner_future.done():
-                    _set_threads(local, local_threads_after_ner)
-                    local_threads_promoted = True
-                    _log(f"[local] ner lane complete; promoted to {local_threads_after_ner} threads")
-                local_answer = local.complete(
-                    system_and_user_message(_local_system_prompt(decision), decision.task.prompt)
-                )
-                if (
-                    local_cascade
-                    and _uses_local_cascade(decision, cascade_margin)
-                    and _should_escalate_local_answer(decision, local_answer, local)
-                ):
-                    _log(f"[cascade] {decision.task.task_id}: self-check escalated to cloud")
-                    cloud_futures[
-                        pool.submit(
-                            complete_with_retry,
-                            _cloud_model(decision, cloud, cloud_fast),
-                            system_and_user_message(_cloud_system_prompt(decision), decision.task.prompt),
-                        )
-                    ] = decision.task.task_id
-                    continue
-                answers[decision.task.task_id] = local_answer
-        finally:
-            _release_chat_model(local)
+        _answer_local_lane(
+            local_decisions,
+            local_factory,
+            ner_future,
+            answers,
+            submit_cloud,
+            local_cascade=local_cascade,
+            cascade_margin=cascade_margin,
+            local_threads_after_ner=local_threads_after_ner,
+            deadline_at=deadline_at,
+        )
 
         answers.update(ner_future.result())
 
@@ -470,6 +469,90 @@ def answer_tasks(  # noqa: PLR0913 - orchestration wires distinct runtime depend
         _log_cloud_usage(cloud, cloud_fast)
 
     return [(decision.task.task_id, answers[decision.task.task_id]) for decision in decisions]
+
+
+def _answer_local_lane(  # noqa: PLR0913 - lane controls are independent runtime concerns.
+    local_decisions: Sequence[_Decision],
+    local_factory: Callable[[], ChatModel],
+    ner_future: futures.Future[dict[str, str]],
+    answers: dict[str, str],
+    submit_cloud: Callable[[_Decision], None],
+    *,
+    local_cascade: bool,
+    cascade_margin: float,
+    local_threads_after_ner: int,
+    deadline_at: float | None,
+) -> None:
+    local = local_factory() if local_decisions else None
+    local_threads_promoted = False
+    if local_decisions:
+        _log(f"[local] execution order: {', '.join(decision.task.task_id for decision in local_decisions)}")
+    try:
+        for index, decision in enumerate(local_decisions, start=1):
+            _log(f"[local {index}/{len(local_decisions)}] {decision.task.task_id}")
+            if local is None:
+                msg = "local model is required for local-routed tasks"
+                raise RuntimeError(msg)
+            if not local_threads_promoted and ner_future.done():
+                _set_threads(local, local_threads_after_ner)
+                local_threads_promoted = True
+                _log(f"[local] ner lane complete; promoted to {local_threads_after_ner} threads")
+            pending = local_decisions[index - 1 :]
+            if deadline_at is not None and time.monotonic() >= deadline_at:
+                _eject_to_cloud(pending, submit_cloud)
+                break
+            try:
+                local_answer = _complete_local_answer(local, decision, deadline_at)
+            except InferenceDeadlineExceededError:
+                _log(f"[deadline] interrupted local generation for {decision.task.task_id}")
+                _eject_to_cloud(pending, submit_cloud)
+                break
+            if (
+                local_cascade
+                and _uses_local_cascade(decision, cascade_margin)
+                and _should_escalate_local_answer(decision, local_answer, local)
+            ):
+                _log(f"[cascade] {decision.task.task_id}: self-check escalated to cloud")
+                submit_cloud(decision)
+                continue
+            answers[decision.task.task_id] = local_answer
+    finally:
+        _release_chat_model(local)
+
+
+def _deadline_at(started_at: float, deadline_seconds: float | None) -> float | None:
+    if deadline_seconds is None or deadline_seconds <= 0:
+        return None
+    return started_at + deadline_seconds
+
+
+def _order_local_decisions(decisions: Sequence[_Decision]) -> list[_Decision]:
+    indexed = list(enumerate(decisions))
+    ranked = sorted(indexed, key=lambda item: (-_local_queue_value(item[1]), item[0]))
+    return [decision for _, decision in ranked]
+
+
+def _local_queue_value(decision: _Decision) -> float:
+    if decision.threshold <= 0:
+        return 0.0
+    local_headroom = max(0.0, 1.0 - decision.risk / decision.threshold)
+    return len(decision.task.prompt) * local_headroom
+
+
+def _complete_local_answer(local: ChatModel, decision: _Decision, deadline_at: float | None) -> str:
+    messages = system_and_user_message(_local_system_prompt(decision), decision.task.prompt)
+    if deadline_at is not None and isinstance(local, DeadlineAwareChatModel):
+        return local.complete_before(messages, deadline_at)
+    return local.complete(messages)
+
+
+def _eject_to_cloud(
+    pending: Sequence[_Decision],
+    submit_cloud: Callable[[_Decision], None],
+) -> None:
+    _log(f"[deadline] ejecting {len(pending)} pending local task(s) to cloud")
+    for decision in pending:
+        submit_cloud(decision)
 
 
 def _answer_ner_lane(

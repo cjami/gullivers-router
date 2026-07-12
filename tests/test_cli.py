@@ -1,6 +1,12 @@
 from gullivers_router.cli import build_parser, main
 from gullivers_router.inference.base import DEFAULT_INFERENCE_SEED
-from gullivers_router.router import DEFAULT_CASCADE_MARGIN, DEFAULT_INPUT, DEFAULT_OUTPUT, DEFAULT_ROUTER_WEIGHTS
+from gullivers_router.router import (
+    DEFAULT_CASCADE_MARGIN,
+    DEFAULT_INPUT,
+    DEFAULT_LOCAL_DEADLINE_SECONDS,
+    DEFAULT_OUTPUT,
+    DEFAULT_ROUTER_WEIGHTS,
+)
 from gullivers_router.training import DEFAULT_CONCURRENCY
 
 
@@ -32,6 +38,8 @@ def test_run_dispatches_to_router(monkeypatch):
                 "--local-cascade",
                 "--cascade-margin",
                 "0.2",
+                "--local-deadline-seconds",
+                "123",
             ]
         )
         == 0
@@ -45,6 +53,7 @@ def test_run_dispatches_to_router(monkeypatch):
     assert call["classify_only"] is True
     assert call["local_cascade"] is True
     assert call["cascade_margin"] == 0.2
+    assert call["local_deadline_seconds"] == 123
 
 
 def test_run_defaults_flow_through_to_router(monkeypatch):
@@ -61,6 +70,7 @@ def test_run_defaults_flow_through_to_router(monkeypatch):
     assert call["classify_only"] is False
     assert call["local_cascade"] is False
     assert call["cascade_margin"] == DEFAULT_CASCADE_MARGIN
+    assert call["local_deadline_seconds"] == DEFAULT_LOCAL_DEADLINE_SECONDS
 
 
 def test_score_practice_dispatches_to_practice(monkeypatch):

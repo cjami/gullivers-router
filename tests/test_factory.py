@@ -10,7 +10,13 @@ from pydantic import BaseModel
 
 from gullivers_router.config import ModelConfig
 from gullivers_router.inference import factory
-from gullivers_router.inference.base import DEFAULT_INFERENCE_SEED, Message, Provider, Role
+from gullivers_router.inference.base import (
+    DEFAULT_INFERENCE_SEED,
+    InferenceDeadlineExceededError,
+    Message,
+    Provider,
+    Role,
+)
 from gullivers_router.inference.llama_cpp import LlamaCppChat, LlamaCppEmbedder, LlamaCppNamedEntity
 from gullivers_router.inference.openai_compat import OpenAICompatChat
 
@@ -203,6 +209,33 @@ def test_llama_chat_loads_with_global_seed(monkeypatch):
     assert captured["temperature"] == 0.0
     assert captured["top_p"] == 0.95
     assert captured["top_k"] == 64
+
+
+def test_llama_chat_stops_generation_at_deadline(monkeypatch):
+    class FakeLlama:
+        @classmethod
+        def from_pretrained(cls, **_kwargs) -> "FakeLlama":
+            return cls()
+
+        def create_chat_completion(self, *, stopping_criteria, **_kwargs):
+            stopping_criteria(None, None)
+            return {"choices": [{"message": {"content": "partial"}}]}
+
+    class FakeStoppingCriteriaList(list):
+        def __call__(self, input_ids, logits):
+            return any(criterion(input_ids, logits) for criterion in self)
+
+    monkeypatch.setitem(
+        sys.modules,
+        "llama_cpp",
+        SimpleNamespace(Llama=FakeLlama, StoppingCriteriaList=FakeStoppingCriteriaList),
+    )
+    times = iter([0.0, 2.0])
+    monkeypatch.setattr("gullivers_router.inference.llama_cpp.time.monotonic", lambda: next(times))
+    chat = LlamaCppChat(_cfg(Provider.LLAMA, repo_id="repo", filename="model.gguf"))
+
+    with pytest.raises(InferenceDeadlineExceededError):
+        chat.complete_before([Message(Role.USER, "hello")], deadline=1.0)
 
 
 def test_llama_chat_updates_threads_after_loading(monkeypatch):
