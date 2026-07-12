@@ -66,6 +66,20 @@ class ChatModel(Protocol):
 
 
 @runtime_checkable
+class BatchChatModel(ChatModel, Protocol):
+    """A chat backend that can decode multiple prompts together."""
+
+    @property
+    def batch_enabled(self) -> bool:
+        """Whether this backend instance supports concurrent sequence decoding."""
+        ...
+
+    def complete_batch(self, messages: Sequence[Sequence[Message]]) -> list[str]:
+        """Return one answer per prompt, preserving input order."""
+        ...
+
+
+@runtime_checkable
 class UsageReporting(Protocol):
     """A model that reports cumulative token usage across its calls."""
 

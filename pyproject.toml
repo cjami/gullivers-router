@@ -12,7 +12,7 @@ requires-python = ">=3.12"
 dependencies = [
     "dateparser>=1.4.1",
     "huggingface-hub",
-    "llama-cpp-python",
+    "llama-cpp-python==0.3.33",
     "numpy",
     "openai",
     "pydantic",

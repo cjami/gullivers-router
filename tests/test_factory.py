@@ -235,6 +235,60 @@ def test_llama_chat_updates_threads_after_loading(monkeypatch):
     assert thread_changes == [(2, 2)]
 
 
+def test_llama_chat_batch_loads_two_sequence_context(monkeypatch):
+    captured = {}
+    embedding_modes = []
+
+    class FakeLlama:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+            self.ctx = object()
+
+        @classmethod
+        def from_pretrained(cls, **kwargs) -> "FakeLlama":
+            return cls(**kwargs)
+
+    def fake_complete_batch(model, messages, **kwargs):
+        captured["batch_model"] = model
+        captured["batch_messages"] = messages
+        captured.update(kwargs)
+        return ["first", "second"]
+
+    low_level = SimpleNamespace(
+        llama_set_embeddings=lambda _ctx, enabled: embedding_modes.append(enabled),
+    )
+    monkeypatch.setitem(sys.modules, "llama_cpp", SimpleNamespace(Llama=FakeLlama, llama_cpp=low_level))
+    monkeypatch.setattr("gullivers_router.inference.llama_cpp.complete_chat_batch", fake_complete_batch)
+    chat = LlamaCppChat(
+        _cfg(Provider.LLAMA, repo_id="repo", filename="model.gguf"),
+        n_ctx=2048,
+        n_gpu_layers=0,
+        max_tokens=128,
+    )
+    messages = [[Message(Role.USER, "one")], [Message(Role.USER, "two")]]
+
+    assert chat.complete_batch(messages) == ["first", "second"]
+    assert captured["n_ctx"] == 4096
+    assert captured["embedding"] is True
+    assert embedding_modes == [False]
+    assert captured["batch_messages"] == messages
+    assert captured["sequence_context"] == 2048
+    assert captured["max_tokens"] == 128
+
+
+def test_llama_chat_batch_falls_back_to_sequential_for_gpu(monkeypatch):
+    calls = []
+    chat = LlamaCppChat(
+        _cfg(Provider.LLAMA, repo_id="repo", filename="model.gguf"),
+        n_gpu_layers=-1,
+    )
+    monkeypatch.setattr(chat, "complete", lambda messages: calls.append(messages) or messages[-1].content)
+    messages = [[Message(Role.USER, "one")], [Message(Role.USER, "two")]]
+
+    assert chat.complete_batch(messages) == ["one", "two"]
+    assert calls == messages
+
+
 def test_llama_chat_rejects_invalid_thread_count():
     chat = LlamaCppChat(_cfg(Provider.LLAMA, repo_id="repo", filename="model.gguf"))
 

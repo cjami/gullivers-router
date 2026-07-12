@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from gullivers_router.inference.base import DEFAULT_INFERENCE_SEED
+from gullivers_router.inference.llama_batch import DEFAULT_BATCH_SLOTS, complete_chat_batch
 from gullivers_router.inference.structured import llama_cpp_json_schema_response_format, strip_thinking_sections
 from gullivers_router.inference.truncation import EMBEDDING_CONTEXT_LIMIT, truncate_head_tail
 
@@ -115,18 +116,21 @@ class LlamaCppChat:
         self._n_threads = n_threads
         self._model_root = model_root
         self._model = None
+        self._sequence_capacity = 1
 
-    def _load(self):  # noqa: ANN202
+    def _load(self, sequence_capacity: int = 1):  # noqa: ANN202
         if self._model is None:
             from llama_cpp import Llama
 
+            self._sequence_capacity = sequence_capacity
             local_path = _local_model_path(self._config, self._model_root)
             if local_path is not None:
                 self._model = Llama(
                     model_path=str(local_path),
-                    n_ctx=self._n_ctx,
+                    n_ctx=self._n_ctx * sequence_capacity,
                     n_gpu_layers=self._n_gpu_layers,
                     flash_attn=self._flash_attn,
+                    embedding=sequence_capacity > 1,
                     n_threads=self._n_threads,
                     n_threads_batch=self._n_threads,
                     seed=DEFAULT_INFERENCE_SEED,
@@ -136,20 +140,50 @@ class LlamaCppChat:
                 self._model = Llama.from_pretrained(
                     repo_id=_require_repo_id(self._config),
                     filename=self._config.filename,
-                    n_ctx=self._n_ctx,
+                    n_ctx=self._n_ctx * sequence_capacity,
                     n_gpu_layers=self._n_gpu_layers,
                     flash_attn=self._flash_attn,
+                    embedding=sequence_capacity > 1,
                     n_threads=self._n_threads,
                     n_threads_batch=self._n_threads,
                     seed=DEFAULT_INFERENCE_SEED,
                     verbose=False,
                 )
+            if sequence_capacity > 1:
+                from llama_cpp import llama_cpp
+
+                llama_cpp.llama_set_embeddings(self._model.ctx, False)  # noqa: FBT003 - C API is positional.
         return self._model
 
     def complete(self, messages: Sequence[Message]) -> str:
         """Generate a response for a single prompt."""
         result = self._create_chat_completion({"messages": [m.as_dict() for m in messages]})
         return _completion_content(result)
+
+    @property
+    def batch_enabled(self) -> bool:
+        """Use multi-sequence decoding only for the submission's CPU backend."""
+        return self._n_gpu_layers == 0
+
+    def complete_batch(self, messages: Sequence[Sequence[Message]]) -> list[str]:
+        """Continuously decode prompts in two llama.cpp sequence slots."""
+        if (
+            not self.batch_enabled
+            or len(messages) < DEFAULT_BATCH_SLOTS
+            or (self._model is not None and self._sequence_capacity < DEFAULT_BATCH_SLOTS)
+        ):
+            return [self.complete(item) for item in messages]
+        model = self._load(DEFAULT_BATCH_SLOTS)
+        return complete_chat_batch(
+            model,
+            messages,
+            enable_thinking=self._enable_thinking,
+            temperature=self._temperature,
+            top_p=self._top_p,
+            top_k=self._top_k,
+            max_tokens=self._max_tokens,
+            sequence_context=self._n_ctx,
+        )
 
     def set_threads(self, n_threads: int) -> None:
         """Set llama.cpp worker counts for completions after the current call."""

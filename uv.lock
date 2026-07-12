@@ -498,7 +498,7 @@ training = [
 requires-dist = [
     { name = "dateparser", specifier = ">=1.4.1" },
     { name = "huggingface-hub" },
-    { name = "llama-cpp-python", index = "https://abetlen.github.io/llama-cpp-python/whl/vulkan" },
+    { name = "llama-cpp-python", specifier = "==0.3.33", index = "https://abetlen.github.io/llama-cpp-python/whl/vulkan" },
     { name = "numpy" },
     { name = "openai" },
     { name = "pydantic" },

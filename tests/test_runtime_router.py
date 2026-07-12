@@ -16,6 +16,7 @@ from gullivers_router.router import (
     Task,
     _answer_specialist_lane,
     _Decision,
+    answer_tasks,
     classify_tasks,
     load_tasks,
     run_with_context,
@@ -590,7 +591,7 @@ def test_factual_answer_uses_only_concise_system_prompt(tmp_path):
     assert local.calls[0][0].content == "Answer correctly in the fewest words. No filler."
 
 
-def test_specialist_and_local_run_concurrently_with_one_thread_and_are_released(tmp_path):
+def test_specialist_and_oversubscribed_local_run_concurrently_and_are_released(tmp_path):
     input_path = tmp_path / "tasks.json"
     output_path = tmp_path / "results.json"
     weights_path = tmp_path / "router.npz"
@@ -640,13 +641,66 @@ def test_specialist_and_local_run_concurrently_with_one_thread_and_are_released(
     assert events.index("build_specialist-model") < events.index("close_specialist")
     assert events.index("build_local-model") < events.index("close_local")
     assert threads["specialist-model"] == 1
-    assert threads["local-model"] == 1
-    assert "threads_local_2" in events
+    assert threads["local-model"] == 2
+    assert "threads_local_2" not in events
     assert json.loads(output_path.read_text(encoding="utf-8")) == [
         {"task_id": "sentiment", "answer": "local: local sentiment question"},
         {"task_id": "sentiment-2", "answer": "local: second local sentiment question"},
         {"task_id": "summary", "answer": "specialist: cloud summary"},
     ]
+
+
+def test_local_batch_backend_answers_all_general_tasks_in_order():
+    decisions = [
+        _Decision(Task("first", "First prompt"), LOCAL_ROUTE, 0.1, 0.5, "local", "factual_knowledge"),
+        _Decision(Task("second", "Second prompt"), LOCAL_ROUTE, 0.1, 0.5, "local", "logical_reasoning"),
+    ]
+
+    class BatchChat(CloseableFakeChat):
+        batch_enabled = True
+
+        def complete_batch(self, message_batches):
+            self.calls.extend(message_batches)
+            return [f"batch: {messages[-1].content}" for messages in message_batches]
+
+    local = BatchChat("unused", [])
+
+    answers = answer_tasks(
+        decisions,
+        lambda: local,
+        lambda: FakeChat("unused"),
+        lambda: FakeNamedEntityModel("{}"),
+        None,
+        workers=1,
+    )
+
+    assert answers == [("first", "batch: First prompt"), ("second", "batch: Second prompt")]
+    assert [messages[-1].content for messages in local.calls] == ["First prompt", "Second prompt"]
+
+
+def test_local_lanes_can_run_sequentially_for_incompatible_backends():
+    events = []
+    decisions = [
+        _Decision(Task("local", "Local prompt"), LOCAL_ROUTE, 0.1, 0.5, "local", "factual_knowledge"),
+        _Decision(Task("summary", "Summary prompt"), LOCAL_ROUTE, 0.1, 0.5, "specialist", "text_summarisation"),
+    ]
+
+    def local_factory():
+        events.append("build_local")
+        return CloseableFakeChat("local", events)
+
+    answers = answer_tasks(
+        decisions,
+        local_factory,
+        lambda: CloseableFakeChat("specialist", events),
+        lambda: FakeNamedEntityModel("{}"),
+        None,
+        workers=1,
+        concurrent_local_lanes=False,
+    )
+
+    assert events.index("close_specialist") < events.index("build_local")
+    assert answers == [("local", "local: Local prompt"), ("summary", "specialist: Summary prompt")]
 
 
 def test_specialist_lane_releases_ner_before_building_summary_model():
