@@ -1,4 +1,7 @@
 import sys
+import time
+from concurrent.futures import ThreadPoolExecutor
+from threading import Lock
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -235,58 +238,36 @@ def test_llama_chat_updates_threads_after_loading(monkeypatch):
     assert thread_changes == [(2, 2)]
 
 
-def test_llama_chat_batch_loads_two_sequence_context(monkeypatch):
-    captured = {}
-    embedding_modes = []
+def test_llama_model_construction_is_serialized_across_roles(monkeypatch):
+    state_lock = Lock()
+    active_loads = 0
+    max_active_loads = 0
 
     class FakeLlama:
-        def __init__(self, **kwargs):
-            captured.update(kwargs)
-            self.ctx = object()
-
         @classmethod
-        def from_pretrained(cls, **kwargs) -> "FakeLlama":
-            return cls(**kwargs)
+        def from_pretrained(cls, **_kwargs) -> "FakeLlama":
+            nonlocal active_loads, max_active_loads
+            with state_lock:
+                active_loads += 1
+                max_active_loads = max(max_active_loads, active_loads)
+            time.sleep(0.02)
+            with state_lock:
+                active_loads -= 1
+            return cls()
 
-    def fake_complete_batch(model, messages, **kwargs):
-        captured["batch_model"] = model
-        captured["batch_messages"] = messages
-        captured.update(kwargs)
-        return ["first", "second"]
+    monkeypatch.setitem(sys.modules, "llama_cpp", SimpleNamespace(Llama=FakeLlama))
+    monkeypatch.setattr("gullivers_router.inference.llama_cpp._SERIALIZE_MODEL_LOADS", True)
+    config = _cfg(Provider.LLAMA, repo_id="repo", filename="model.gguf")
+    chat = LlamaCppChat(config)
+    ner = LlamaCppNamedEntity(config)
 
-    low_level = SimpleNamespace(
-        llama_set_embeddings=lambda _ctx, enabled: embedding_modes.append(enabled),
-    )
-    monkeypatch.setitem(sys.modules, "llama_cpp", SimpleNamespace(Llama=FakeLlama, llama_cpp=low_level))
-    monkeypatch.setattr("gullivers_router.inference.llama_cpp.complete_chat_batch", fake_complete_batch)
-    chat = LlamaCppChat(
-        _cfg(Provider.LLAMA, repo_id="repo", filename="model.gguf"),
-        n_ctx=2048,
-        n_gpu_layers=0,
-        max_tokens=128,
-    )
-    messages = [[Message(Role.USER, "one")], [Message(Role.USER, "two")]]
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        chat_future = pool.submit(chat._load)
+        ner_future = pool.submit(ner._load)
+        chat_future.result()
+        ner_future.result()
 
-    assert chat.complete_batch(messages) == ["first", "second"]
-    assert captured["n_ctx"] == 4096
-    assert captured["embedding"] is True
-    assert embedding_modes == [False]
-    assert captured["batch_messages"] == messages
-    assert captured["sequence_context"] == 2048
-    assert captured["max_tokens"] == 128
-
-
-def test_llama_chat_batch_falls_back_to_sequential_for_gpu(monkeypatch):
-    calls = []
-    chat = LlamaCppChat(
-        _cfg(Provider.LLAMA, repo_id="repo", filename="model.gguf"),
-        n_gpu_layers=-1,
-    )
-    monkeypatch.setattr(chat, "complete", lambda messages: calls.append(messages) or messages[-1].content)
-    messages = [[Message(Role.USER, "one")], [Message(Role.USER, "two")]]
-
-    assert chat.complete_batch(messages) == ["one", "two"]
-    assert calls == messages
+    assert max_active_loads == 1
 
 
 def test_llama_chat_rejects_invalid_thread_count():
