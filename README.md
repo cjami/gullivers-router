@@ -8,6 +8,8 @@ the risk of a weak local answer and identify the task category, which also lets 
 specialist paths for summarisation, named entities and arithmetic. The runtime is designed for
 resource-constrained environments.
 
+This was built for the AMD Developer Hackathon: ACT II.
+
 ## How it works
 
 ```text
@@ -66,6 +68,9 @@ Gemma 4 E2B and MiniMax M3 answered every question. GLM-5.2 then judged each pai
 model names hidden and answer order balanced, rating their quality and choosing the stronger
 response. A question is labelled as needing cloud when Gemma falls below the quality floor
 and MiniMax clears it.
+
+The answered and judged training tasks are archived on Hugging Face at
+[cjami/gullivers-router-training-data](https://huggingface.co/datasets/cjami/gullivers-router-training-data).
 
 We use 6,400 rows for training, 800 for threshold calibration and 800 for held-out testing.
 The pipeline is resumable at every stage and exports both `router.npz` and
