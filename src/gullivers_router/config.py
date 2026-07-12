@@ -94,21 +94,6 @@ _ROLE_DEFAULTS: dict[str, _RoleDefaults] = {
         input_prefix=QWEN_ROUTING_PREFIX,
         model_root=Path("models"),
     ),
-    "SPECIALIST": _RoleDefaults(
-        provider=Provider.LLAMA,
-        repo_id="unsloth/Qwen3-0.6B-GGUF",
-        filename="Qwen3-0.6B-Q4_0.gguf",
-        n_ctx=2048,
-        n_gpu_layers=0,
-        flash_attn=False,
-        enable_thinking=False,
-        temperature=0.0,
-        top_p=1.0,
-        top_k=1,
-        max_tokens=512,
-        n_threads=2,
-        model_root=Path("models"),
-    ),
     "NER": _RoleDefaults(
         provider=Provider.LLAMA,
         repo_id="Minibase/NER-Standard",
@@ -248,7 +233,6 @@ class Settings:
     hf_token: str | None
     local: ModelConfig
     embedding: ModelConfig
-    specialist: ModelConfig
     ner: ModelConfig
     cloud: ModelConfig
     judge: ModelConfig
@@ -263,7 +247,6 @@ class Settings:
             hf_token=env.get("HF_TOKEN"),
             local=_role_config(env, "LOCAL"),
             embedding=_role_config(env, "EMBEDDING"),
-            specialist=_role_config(env, "SPECIALIST"),
             ner=_role_config(env, "NER"),
             cloud=_role_config(env, "CLOUD"),
             judge=_role_config(env, "JUDGE"),

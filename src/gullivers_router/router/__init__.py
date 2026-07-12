@@ -77,9 +77,6 @@ _CLOUD_FIRST_CATEGORIES = {
     "code_generation",
 }
 _LOCAL_FIRST_CATEGORIES: set[str] = set()
-_SPECIALIST_FIRST_CATEGORIES = {
-    "text_summarisation",
-}
 _NER_FIRST_CATEGORIES = {"named_entity_recognition"}
 _LOCAL_SELF_CHECK_SYSTEM_PROMPT = (
     "You are a strict verifier for a small local model. Given the original task and the local answer, decide "
@@ -180,13 +177,9 @@ def run_with_context(options: RuntimeOptions, context: RuntimeContext) -> None:
     tasks = load_tasks(options.input_path)
     _log(f"loaded {len(tasks)} tasks <- {options.input_path}")
     local_model = _model_name(context.settings.local)
-    specialist_model = _model_name(context.settings.specialist)
     ner_model = _model_name(context.settings.ner)
     cloud_model = _model_name(context.settings.cloud)
-    _log(
-        f"routing with local={local_model} specialist={specialist_model} ner={ner_model} "
-        f"cloud={cloud_model} weights={options.router_weights}"
-    )
+    _log(f"routing with local={local_model} ner={ner_model} cloud={cloud_model} weights={options.router_weights}")
 
     embedder = context.embedding_factory(context.settings.embedding)
     decisions = classify_tasks(
@@ -194,7 +187,6 @@ def run_with_context(options: RuntimeOptions, context: RuntimeContext) -> None:
         embedder,
         load_numpy(options.router_weights),
         local_model=local_model,
-        specialist_model=specialist_model,
         ner_model=ner_model,
         cloud_model=cloud_model,
     )
@@ -223,24 +215,20 @@ def run_with_context(options: RuntimeOptions, context: RuntimeContext) -> None:
         and any(_uses_fast_cloud_category(decision) for decision in fast_cloud_candidates)
         else None
     )
-    has_general_lane = any(
-        decision.route == LOCAL_ROUTE and not _uses_specialist_model(decision) and not _uses_ner_model(decision)
-        for decision in decisions
-    )
-    has_specialist_lane = any(_uses_specialist_model(decision) or _uses_ner_model(decision) for decision in decisions)
+    has_general_lane = any(decision.route == LOCAL_ROUTE and not _uses_ner_model(decision) for decision in decisions)
+    has_ner_lane = any(_uses_ner_model(decision) for decision in decisions)
     local_threads = context.settings.local.n_threads or 1
-    initial_local_threads = 1 if has_general_lane and has_specialist_lane else local_threads
+    initial_local_threads = 1 if has_general_lane and has_ner_lane else local_threads
     answers = answer_tasks(
         decisions,
         lambda: context.chat_factory(replace(context.settings.local, n_threads=initial_local_threads)),
-        lambda: context.chat_factory(_single_threaded(context.settings.specialist)),
         lambda: context.ner_factory(_single_threaded(context.settings.ner)),
         cloud,
         cloud_fast=cloud_fast,
         workers=options.workers,
         local_cascade=options.local_cascade,
         cascade_margin=options.cascade_margin,
-        local_threads_after_specialist=local_threads,
+        local_threads_after_ner=local_threads,
     )
     _log_rss("after answering")
     _log(f"writing {len(answers)} answers -> {options.output_path}")
@@ -285,7 +273,6 @@ def classify_tasks(  # noqa: PLR0913 - classifier diagnostics need explicit mode
     weights: dict[str, np.ndarray],
     *,
     local_model: str,
-    specialist_model: str | None = None,
     ner_model: str | None = None,
     cloud_model: str,
 ) -> list[_Decision]:
@@ -311,10 +298,7 @@ def classify_tasks(  # noqa: PLR0913 - classifier diagnostics need explicit mode
             model = cloud_model
         elif category in _NER_FIRST_CATEGORIES:
             route = LOCAL_ROUTE
-            model = ner_model or specialist_model or local_model
-        elif category in _SPECIALIST_FIRST_CATEGORIES:
-            route = LOCAL_ROUTE
-            model = specialist_model or local_model
+            model = ner_model or local_model
         elif category in _LOCAL_FIRST_CATEGORIES:
             route = LOCAL_ROUTE
             model = local_model
@@ -384,7 +368,6 @@ class _LocalSelfCheck(BaseModel):
 def answer_tasks(  # noqa: PLR0913 - orchestration wires distinct runtime dependencies.
     decisions: Sequence[_Decision],
     local_factory: Callable[[], ChatModel],
-    specialist_factory: Callable[[], ChatModel],
     ner_factory: Callable[[], NamedEntityModel],
     cloud: ChatModel | None,
     *,
@@ -392,28 +375,23 @@ def answer_tasks(  # noqa: PLR0913 - orchestration wires distinct runtime depend
     workers: int,
     local_cascade: bool = False,
     cascade_margin: float = DEFAULT_CASCADE_MARGIN,
-    local_threads_after_specialist: int = 1,
+    local_threads_after_ner: int = 1,
 ) -> list[tuple[str, str]]:
     """Generate answers for routed tasks, preserving input order.
 
     Cloud requests are network-bound and dispatched to a thread pool. Two single-threaded local
-    lanes run concurrently: the general model in this thread, and NER followed by the summary
-    specialist in a worker. NER is released before the specialist loads so no more than two local
-    models are resident at once.
+    lanes run concurrently: the general model in this thread and NER in a worker.
     """
     ner_decisions = [decision for decision in decisions if _uses_ner_model(decision)]
-    specialist_decisions = [decision for decision in decisions if _uses_specialist_model(decision)]
     local_decisions = [
-        decision
-        for decision in decisions
-        if decision.route == LOCAL_ROUTE and not _uses_specialist_model(decision) and not _uses_ner_model(decision)
+        decision for decision in decisions if decision.route == LOCAL_ROUTE and not _uses_ner_model(decision)
     ]
     cloud_decisions = [decision for decision in decisions if decision.route == CLOUD_ROUTE]
     direct_decisions = [decision for decision in decisions if decision.route == DETERMINISTIC_MATH_ROUTE]
     cascade_count = sum(1 for decision in local_decisions if _uses_local_cascade(decision, cascade_margin))
     cascade_label = f", {cascade_count} cascade-eligible" if local_cascade else ""
     _log(
-        f"answering {len(ner_decisions)} ner, {len(specialist_decisions)} specialist, {len(local_decisions)} local "
+        f"answering {len(ner_decisions)} ner, {len(local_decisions)} local "
         f"({cascade_label.removeprefix(', ') or 'general lane'}), "
         f"{len(cloud_decisions)} cloud ({workers} workers), "
         f"{len(direct_decisions)} deterministic"
@@ -422,7 +400,7 @@ def answer_tasks(  # noqa: PLR0913 - orchestration wires distinct runtime depend
     answers = {decision.task.task_id: str(decision.answer) for decision in direct_decisions}
     with (
         futures.ThreadPoolExecutor(max_workers=max(1, workers)) as pool,
-        futures.ThreadPoolExecutor(max_workers=1) as specialist_pool,
+        futures.ThreadPoolExecutor(max_workers=1) as ner_pool,
     ):
         cloud_futures = {
             pool.submit(
@@ -432,13 +410,7 @@ def answer_tasks(  # noqa: PLR0913 - orchestration wires distinct runtime depend
             ): decision.task.task_id
             for decision in cloud_decisions
         }
-        specialist_future = specialist_pool.submit(
-            _answer_specialist_lane,
-            ner_decisions,
-            specialist_decisions,
-            ner_factory,
-            specialist_factory,
-        )
+        ner_future = ner_pool.submit(_answer_ner_lane, ner_decisions, ner_factory)
 
         local = local_factory() if local_decisions else None
         local_threads_promoted = False
@@ -448,10 +420,10 @@ def answer_tasks(  # noqa: PLR0913 - orchestration wires distinct runtime depend
                 if local is None:
                     msg = "local model is required for local-routed tasks"
                     raise RuntimeError(msg)
-                if not local_threads_promoted and specialist_future.done():
-                    _set_threads(local, local_threads_after_specialist)
+                if not local_threads_promoted and ner_future.done():
+                    _set_threads(local, local_threads_after_ner)
                     local_threads_promoted = True
-                    _log(f"[local] specialist lane complete; promoted to {local_threads_after_specialist} threads")
+                    _log(f"[local] ner lane complete; promoted to {local_threads_after_ner} threads")
                 local_answer = local.complete(system_and_user_message(_system_prompt(decision), decision.task.prompt))
                 if (
                     local_cascade
@@ -471,7 +443,7 @@ def answer_tasks(  # noqa: PLR0913 - orchestration wires distinct runtime depend
         finally:
             _release_chat_model(local)
 
-        answers.update(specialist_future.result())
+        answers.update(ner_future.result())
 
         total_cloud = len(cloud_futures)
         for completed, future in enumerate(futures.as_completed(cloud_futures), start=1):
@@ -485,11 +457,9 @@ def answer_tasks(  # noqa: PLR0913 - orchestration wires distinct runtime depend
     return [(decision.task.task_id, answers[decision.task.task_id]) for decision in decisions]
 
 
-def _answer_specialist_lane(
+def _answer_ner_lane(
     ner_decisions: Sequence[_Decision],
-    specialist_decisions: Sequence[_Decision],
     ner_factory: Callable[[], NamedEntityModel],
-    specialist_factory: Callable[[], ChatModel],
 ) -> dict[str, str]:
     answers: dict[str, str] = {}
     ner = ner_factory() if ner_decisions else None
@@ -504,19 +474,6 @@ def _answer_specialist_lane(
         _release_named_entity_model(ner)
     if ner_decisions:
         _log_rss("after releasing ner")
-
-    specialist = specialist_factory() if specialist_decisions else None
-    try:
-        for index, decision in enumerate(specialist_decisions, start=1):
-            _log(f"[specialist {index}/{len(specialist_decisions)}] {decision.task.task_id}")
-            if specialist is None:
-                msg = "specialist model is required for specialist-routed tasks"
-                raise RuntimeError(msg)
-            answers[decision.task.task_id] = specialist.complete(_specialist_messages(decision))
-    finally:
-        _release_chat_model(specialist)
-    if specialist_decisions:
-        _log_rss("after releasing specialist")
     return answers
 
 
@@ -542,10 +499,6 @@ def _uses_fast_cloud_category(decision: _Decision) -> bool:
     return decision.category in _FAST_CLOUD_CATEGORIES
 
 
-def _uses_specialist_model(decision: _Decision) -> bool:
-    return decision.route == LOCAL_ROUTE and decision.category in _SPECIALIST_FIRST_CATEGORIES
-
-
 def _uses_ner_model(decision: _Decision) -> bool:
     return decision.route == LOCAL_ROUTE and decision.category in _NER_FIRST_CATEGORIES
 
@@ -553,7 +506,7 @@ def _uses_ner_model(decision: _Decision) -> bool:
 def _uses_local_cascade(decision: _Decision, margin: float) -> bool:
     if decision.route != LOCAL_ROUTE:
         return False
-    if _uses_specialist_model(decision) or _uses_ner_model(decision):
+    if _uses_ner_model(decision):
         return False
     return decision.category in _CASCADE_CATEGORIES or decision.risk >= decision.threshold - margin
 
@@ -591,10 +544,6 @@ def _task_context(decision: _Decision) -> str:
 
 def _fast_cloud_config(config: ModelConfig) -> ModelConfig:
     return replace(config, enable_thinking=False, reasoning_effort=None, temperature=0.0)
-
-
-def _specialist_messages(decision: _Decision) -> list[Message]:
-    return system_and_user_message(_system_prompt(decision), decision.task.prompt)
 
 
 def _system_prompt(decision: _Decision) -> str:
@@ -657,7 +606,7 @@ def _release_chat_model(model: ChatModel | None) -> None:
 
 
 def _release_named_entity_model(model: NamedEntityModel | None) -> None:
-    """Release the NER model before loading the summary specialist."""
+    """Release the NER model after its lane completes."""
     if isinstance(model, Closeable):
         model.close()
     gc.collect()

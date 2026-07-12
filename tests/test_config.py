@@ -11,7 +11,6 @@ def test_from_env_populates_every_role():
     settings = Settings.from_env({})
     assert settings.local.provider == Provider.LLAMA
     assert settings.embedding.provider == Provider.LLAMA
-    assert settings.specialist.provider == Provider.LLAMA
     assert settings.ner.provider == Provider.LLAMA
     assert settings.cloud.provider == Provider.FIREWORKS
     assert settings.judge.provider == Provider.FIREWORKS
@@ -148,23 +147,6 @@ def test_embedding_defaults_use_qwen_for_routing_classification():
     assert settings.embedding.input_prefix == QWEN_ROUTING_PREFIX
     assert settings.embedding.n_gpu_layers == 0
     assert settings.embedding.n_threads == 2
-
-
-def test_specialist_defaults_use_qwen_for_local_offload():
-    settings = Settings.from_env({})
-
-    assert settings.specialist.repo_id == "unsloth/Qwen3-0.6B-GGUF"
-    assert settings.specialist.filename == "Qwen3-0.6B-Q4_0.gguf"
-    assert settings.specialist.n_ctx == 2048
-    assert settings.specialist.n_gpu_layers == 0
-    assert settings.specialist.flash_attn is False
-    assert settings.specialist.enable_thinking is False
-    assert settings.specialist.temperature == 0.0
-    assert settings.specialist.top_p == 1.0
-    assert settings.specialist.top_k == 1
-    assert settings.specialist.max_tokens == 512
-    assert settings.specialist.n_threads == 2
-    assert settings.specialist.model_root == Path("models")
 
 
 def test_ner_defaults_use_minibase_standard():

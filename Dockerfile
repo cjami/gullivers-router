@@ -26,8 +26,6 @@ WORKDIR /app
 COPY --from=builder /install /usr/local
 COPY models/google/gemma-4-E2B-it-qat-q4_0-gguf/gemma-4-E2B_q4_0-it.gguf \
     /app/models/google/gemma-4-E2B-it-qat-q4_0-gguf/gemma-4-E2B_q4_0-it.gguf
-COPY models/unsloth/Qwen3-0.6B-GGUF/Qwen3-0.6B-Q4_0.gguf \
-    /app/models/unsloth/Qwen3-0.6B-GGUF/Qwen3-0.6B-Q4_0.gguf
 COPY models/Minibase/NER-Standard/model.gguf \
     /app/models/Minibase/NER-Standard/model.gguf
 COPY models/Qwen/Qwen3-Embedding-0.6B-GGUF/Qwen3-Embedding-0.6B-Q8_0.gguf \

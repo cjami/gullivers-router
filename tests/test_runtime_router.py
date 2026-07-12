@@ -14,7 +14,7 @@ from gullivers_router.router import (
     RuntimeContext,
     RuntimeOptions,
     Task,
-    _answer_specialist_lane,
+    _answer_ner_lane,
     _Decision,
     classify_tasks,
     load_tasks,
@@ -91,7 +91,6 @@ def _settings():
         hf_token=None,
         local=ModelConfig(provider=Provider.LLAMA, repo_id="local-model", n_threads=2),
         embedding=ModelConfig(provider=Provider.LLAMA, repo_id="embedding-model"),
-        specialist=ModelConfig(provider=Provider.LLAMA, repo_id="specialist-model"),
         ner=ModelConfig(provider=Provider.LLAMA, repo_id="ner-model"),
         cloud=ModelConfig(
             provider=Provider.FIREWORKS,
@@ -287,7 +286,7 @@ def _mixed_cloud_usage_weights(path):
     )
 
 
-def _sentiment_summary_category_weights(path):
+def _sentiment_summary_category_weights(path, *, summary_alpha=0.1):
     np.savez(
         path,
         weights=np.array([1.0]),
@@ -297,6 +296,20 @@ def _sentiment_summary_category_weights(path):
         cat_weights=np.array([[-1.0], [1.0]]),
         cat_bias=np.array([0.0, 0.0]),
         cat_classes=np.array(["sentiment_classification", "text_summarisation"]),
+        cat_alpha=np.array([0.5, summary_alpha]),
+    )
+
+
+def _sentiment_ner_category_weights(path):
+    np.savez(
+        path,
+        weights=np.array([1.0]),
+        bias=np.float64(0.0),
+        alpha=np.float64(0.1),
+        normalize=True,
+        cat_weights=np.array([[-1.0], [1.0]]),
+        cat_bias=np.array([0.0, 0.0]),
+        cat_classes=np.array(["sentiment_classification", "named_entity_recognition"]),
         cat_alpha=np.array([0.5, 0.1]),
     )
 
@@ -347,7 +360,7 @@ def test_classify_tasks_applies_per_category_thresholds(tmp_path):
     assert [decision.route for decision in decisions] == [LOCAL_ROUTE, CLOUD_ROUTE]
 
 
-def test_summary_category_routes_to_local_specialist_first(tmp_path):
+def test_summary_category_respects_cloud_threshold(tmp_path):
     weights_path = tmp_path / "router.npz"
     _sentiment_summary_category_weights(weights_path)
     weights = dict(np.load(weights_path))
@@ -357,13 +370,12 @@ def test_summary_category_routes_to_local_specialist_first(tmp_path):
         FakeEmbedder(),
         weights,
         local_model="local-model",
-        specialist_model="specialist-model",
         cloud_model="cloud-model",
     )
 
     assert [decision.category for decision in decisions] == ["sentiment_classification", "text_summarisation"]
-    assert [decision.route for decision in decisions] == [LOCAL_ROUTE, LOCAL_ROUTE]
-    assert [decision.model for decision in decisions] == ["local-model", "specialist-model"]
+    assert [decision.route for decision in decisions] == [LOCAL_ROUTE, CLOUD_ROUTE]
+    assert [decision.model for decision in decisions] == ["local-model", "cloud-model"]
 
 
 def test_ner_category_routes_to_dedicated_local_model_first(tmp_path):
@@ -376,7 +388,6 @@ def test_ner_category_routes_to_dedicated_local_model_first(tmp_path):
         FakeEmbedder(),
         weights,
         local_model="local-model",
-        specialist_model="specialist-model",
         ner_model="ner-model",
         cloud_model="cloud-model",
     )
@@ -532,7 +543,7 @@ def test_answer_prompts_include_category_hints(tmp_path):
     input_path = tmp_path / "tasks.json"
     output_path = tmp_path / "results.json"
     weights_path = tmp_path / "router.npz"
-    _sentiment_summary_category_weights(weights_path)
+    _sentiment_summary_category_weights(weights_path, summary_alpha=0.9)
     input_path.write_text(
         json.dumps(
             [
@@ -544,7 +555,6 @@ def test_answer_prompts_include_category_hints(tmp_path):
     )
     chats = {
         "local-model": FakeChat("local"),
-        "specialist-model": FakeChat("specialist"),
         "cloud-model": FakeChat("cloud"),
     }
 
@@ -556,8 +566,8 @@ def test_answer_prompts_include_category_hints(tmp_path):
         _context(chat_factory=chat_factory),
     )
 
-    summary_system = chats["specialist-model"].calls[0][0].content
     sentiment_system = chats["local-model"].calls[0][0].content
+    summary_system = chats["local-model"].calls[1][0].content
     assert (
         sentiment_system == "Answer correctly in the fewest words. No filler. "
         "Label positive, negative, or neutral; briefly justify."
@@ -566,7 +576,7 @@ def test_answer_prompts_include_category_hints(tmp_path):
     assert "For " not in sentiment_system
     assert "For " not in summary_system
     assert chats["local-model"].calls[0][-1].content == "local sentiment question"
-    assert chats["specialist-model"].calls[0][-1].content == "cloud summary"
+    assert chats["local-model"].calls[1][-1].content == "cloud summary"
     assert chats["cloud-model"].calls == []
 
 
@@ -590,17 +600,17 @@ def test_factual_answer_uses_only_concise_system_prompt(tmp_path):
     assert local.calls[0][0].content == "Answer correctly in the fewest words. No filler."
 
 
-def test_specialist_and_local_run_concurrently_then_promote_threads(tmp_path):
+def test_ner_and_local_run_concurrently_then_promote_threads(tmp_path):
     input_path = tmp_path / "tasks.json"
     output_path = tmp_path / "results.json"
     weights_path = tmp_path / "router.npz"
-    _sentiment_summary_category_weights(weights_path)
+    _sentiment_ner_category_weights(weights_path)
     input_path.write_text(
         json.dumps(
             [
                 {"task_id": "sentiment", "prompt": "local sentiment question"},
                 {"task_id": "sentiment-2", "prompt": "second local sentiment question"},
-                {"task_id": "summary", "prompt": "cloud summary"},
+                {"task_id": "ner", "prompt": "cloud ner"},
             ]
         ),
         encoding="utf-8",
@@ -619,11 +629,12 @@ def test_specialist_and_local_run_concurrently_then_promote_threads(tmp_path):
         def set_threads(self, n_threads):
             events.append(f"threads_{self.prefix}_{n_threads}")
 
-    chats = {
-        "local-model": ConcurrentChat("local", events),
-        "specialist-model": ConcurrentChat("specialist", events),
-        "cloud-model": FakeChat("cloud"),
-    }
+    class ConcurrentNer(FakeNamedEntityModel):
+        def extract(self, text):
+            barrier.wait(timeout=1)
+            return super().extract(text)
+
+    chats = {"local-model": ConcurrentChat("local", events), "cloud-model": FakeChat("cloud")}
     threads = {}
 
     def chat_factory(config):
@@ -632,24 +643,29 @@ def test_specialist_and_local_run_concurrently_then_promote_threads(tmp_path):
         threads[name] = config.n_threads
         return chats[name]
 
+    def ner_factory(config):
+        events.append("build_ner-model")
+        threads["ner-model"] = config.n_threads
+        return ConcurrentNer(events=events)
+
     run_with_context(
         RuntimeOptions(input_path=input_path, output_path=output_path, router_weights=weights_path),
-        _context(chat_factory=chat_factory),
+        _context(chat_factory=chat_factory, ner_factory=ner_factory),
     )
 
-    assert events.index("build_specialist-model") < events.index("close_specialist")
     assert events.index("build_local-model") < events.index("close_local")
-    assert threads["specialist-model"] == 1
+    assert events.index("build_ner-model") < events.index("close_ner")
     assert threads["local-model"] == 1
+    assert threads["ner-model"] == 1
     assert "threads_local_2" in events
     assert json.loads(output_path.read_text(encoding="utf-8")) == [
         {"task_id": "sentiment", "answer": "local: local sentiment question"},
         {"task_id": "sentiment-2", "answer": "local: second local sentiment question"},
-        {"task_id": "summary", "answer": "specialist: cloud summary"},
+        {"task_id": "ner", "answer": ""},
     ]
 
 
-def test_specialist_lane_releases_ner_before_building_summary_model():
+def test_ner_lane_releases_model_after_answering():
     events = []
     ner_decision = _Decision(
         task=Task("ner", "Extract entities from: 'Ada Lovelace visited London.'"),
@@ -659,28 +675,15 @@ def test_specialist_lane_releases_ner_before_building_summary_model():
         model="ner-model",
         category="named_entity_recognition",
     )
-    summary_decision = _Decision(
-        task=Task("summary", "Summarize this passage."),
-        route=LOCAL_ROUTE,
-        risk=0.1,
-        threshold=0.5,
-        model="specialist-model",
-        category="text_summarisation",
-    )
 
     def ner_factory():
         events.append("build_ner")
         return FakeNamedEntityModel('{"PER": ["Ada Lovelace"], "ORG": [], "LOC": ["London"]}', events)
 
-    def specialist_factory():
-        events.append("build_specialist")
-        return CloseableFakeChat("specialist", events)
+    answers = _answer_ner_lane([ner_decision], ner_factory)
 
-    answers = _answer_specialist_lane([ner_decision], [summary_decision], ner_factory, specialist_factory)
-
-    assert events == ["build_ner", "close_ner", "build_specialist", "close_specialist"]
+    assert events == ["build_ner", "close_ner"]
     assert answers["ner"] == "Ada Lovelace: PERSON\nLondon: LOCATION"
-    assert answers["summary"] == "specialist: Summarize this passage."
 
 
 def test_ner_uses_dedicated_model_and_source_ordered_dates(tmp_path):

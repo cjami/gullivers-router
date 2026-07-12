@@ -5,7 +5,7 @@ the cloud when the expected improvement in answer quality justifies the extra co
 
 The decision comes from classifiers trained on judged local and cloud responses. They estimate
 the risk of a weak local answer and identify the task category, which also lets the runtime use
-specialist paths for summarisation, named entities and arithmetic. The runtime is designed for
+specialist paths for named entities and arithmetic. The runtime is designed for
 resource-constrained environments.
 
 This was built for the AMD Developer Hackathon: ACT II.
@@ -25,7 +25,7 @@ Qwen3 embedding (0.6B)
                  +----------------+----------------+
                  |                |                |
              local model      specialist       cloud model
-               Gemma          Qwen / NER         MiniMax
+               Gemma         NER / arithmetic     MiniMax
 ```
 
 Each prompt is embedded once. Two small logistic models run over that embedding: one predicts
@@ -44,15 +44,15 @@ The runtime uses the fastest suitable path after classification:
 | Work | Path |
 | --- | --- |
 | General local tasks | Gemma 4 E2B Q4 |
-| Summarisation | Qwen3 0.6B Q4 |
+| Summarisation | Gemma 4 E2B Q4 |
 | Named entities | Minibase NER-Standard plus date parsing |
 | Simple arithmetic | Safe deterministic evaluator |
 | Code generation and debugging | Cloud |
 | Other high-risk prompts | Cloud |
 
-Gemma handles general tasks while NER and summarisation share a second local lane. Cloud
+Gemma handles general tasks and summaries while NER runs on a second local lane. Cloud
 requests run concurrently in the background. Both local lanes start with one CPU thread;
-when the specialist lane finishes, Gemma takes both threads. Models are released between
+when the NER lane finishes, Gemma takes both threads. Models are released between
 phases to keep memory use within the submission limit.
 
 ## Training the router
@@ -118,7 +118,7 @@ Useful commands:
 
 ## Docker
 
-The Dockerfile builds a self-contained CPU-only `linux/amd64` image with all four quantised
+The Dockerfile builds a self-contained CPU-only `linux/amd64` image with all three quantised
 GGUF models and the calibrated router bundle.
 
 ```sh
