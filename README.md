@@ -1,43 +1,92 @@
 # Gulliver's Router
 
-A low-cost routing system that splits traffic between a free local model and a
-heavy-duty cloud AI based on query difficulty.
+Gulliver's Router reduces cloud usage by handling suitable prompts locally. It sends work to
+the cloud when the expected improvement in answer quality justifies the extra cost.
+
+The decision comes from classifiers trained on judged local and cloud responses. They estimate
+the risk of a weak local answer and identify the task category, which also lets the runtime use
+specialist paths for summarisation, named entities and arithmetic. The runtime is designed for
+resource-constrained environments.
+
+## How it works
+
+```text
+prompt
+  |
+  v
+Qwen3 embedding (0.6B)
+  |
+  +--> category classifier --> task-specific threshold and execution lane
+  |
+  +--> risk classifier -----> probability that local quality will fall short
+                                  |
+                 +----------------+----------------+
+                 |                |                |
+             local model      specialist       cloud model
+               Gemma          Qwen / NER         MiniMax
+```
+
+Each prompt is embedded once. Two small logistic models run over that embedding: one predicts
+the task category and the other estimates whether cloud can rescue a weak local answer. The
+router uses a separately calibrated risk threshold for each category, because the same score
+does not carry the same meaning for sentiment, code and multi-step reasoning.
+
+Thresholds are selected to use as few cloud calls as possible while meeting a target pass
+rate. The trained scikit-learn models are exported to a 76 KB NumPy bundle, so production
+routing is just a handful of NumPy operations with no scikit-learn dependency.
+
+## Execution lanes
+
+The runtime uses the fastest suitable path after classification:
+
+| Work | Path |
+| --- | --- |
+| General local tasks | Gemma 4 E2B Q4 |
+| Summarisation | Qwen3 0.6B Q4 |
+| Named entities | Minibase NER-Standard plus date parsing |
+| Simple arithmetic | Safe deterministic evaluator |
+| Code generation and debugging | Cloud |
+| Other high-risk prompts | Cloud |
+
+Gemma handles general tasks while NER and summarisation share a second local lane. Cloud
+requests run concurrently in the background. Both local lanes start with one CPU thread;
+when the specialist lane finishes, Gemma takes both threads. Models are released between
+phases to keep memory use within the submission limit.
+
+## Training the router
+
+We sampled 8,000 real user questions from a
+[cleaned, categorised mirror](https://huggingface.co/datasets/OpenLeecher/lmsys_chat_1m_clean)
+of [LMSYS-Chat-1M](https://huggingface.co/datasets/lmsys/lmsys-chat-1m). The sampler streams
+1,000 questions for each of eight categories: factual knowledge, mathematical reasoning,
+sentiment classification, summarisation, named-entity recognition, code debugging, logical
+reasoning and code generation.
+
+Gemma 4 E2B and MiniMax M3 answered every question. GLM-5.2 then judged each pair, with the
+model names hidden and answer order balanced, rating their quality and choosing the stronger
+response. A question is labelled as needing cloud when Gemma falls below the quality floor
+and MiniMax clears it.
+
+We use 6,400 rows for training, 800 for threshold calibration and 800 for held-out testing.
+The pipeline is resumable at every stage and exports both `router.npz` and
+`router_metrics.json`, keeping the model and its operating-point history together.
 
 ## Setup
 
-```sh
-make setup   # uv sync
-cp .env.example .env   # then fill in HF_TOKEN and FIREWORKS_API_KEY
-```
-
-`make setup` installs `llama-cpp-python` from a prebuilt **Vulkan** wheel (pinned to
-`https://abetlen.github.io/llama-cpp-python/whl/vulkan` in `pyproject.toml`). If no wheel
-matches your platform, build from source instead:
+Requires Python 3.12+, [uv](https://docs.astral.sh/uv/) and a Fireworks API key.
 
 ```sh
-CMAKE_ARGS="-DGGML_VULKAN=on" uv pip install --no-binary llama-cpp-python llama-cpp-python
+make setup
+cp .env.example .env
 ```
 
-Models are downloaded automatically from HuggingFace on first use, using each role's built-in
-configuration. Qwen3 Embedding 0.6B uses
-last-token pooling to produce 1024-dimensional vectors. Each role — local generation,
-summarisation, NER, embeddings, runtime cloud, and the training judge — can point at a supported provider
-(`llama`, `openai`, or `fireworks`).
+Add `HF_TOKEN` and `FIREWORKS_API_KEY` to `.env`. Models download from Hugging Face on first
+use. Defaults match the CPU-only submission environment; local GPU acceleration can be enabled
+through the role-specific environment settings.
 
-Runtime defaults match the CPU-only submission environment and use two llama.cpp threads.
-Local GPU experiments can opt in with role-specific environment overrides such as
-`LOCAL_N_GPU_LAYERS=-1` and `EMBEDDING_N_GPU_LAYERS=-1`.
+## Running it
 
-## Usage
-
-| Command                        | Description                                       |
-| ------------------------------ | ------------------------------------------------- |
-| `uv run gullivers-router run`          | Run the batch router (local vs cloud).                    |
-| `uv run gullivers-router score-practice` | Score practice results against the answer set with the judge. |
-| `uv run gullivers-router train`        | Build the router training dataset (offline).              |
-| `uv run gullivers-router train-router` | Train the routing model from judge scores and embeddings. |
-
-The runtime defaults to the hackathon file contract:
+Run a batch using the hackathon file contract:
 
 ```sh
 uv run gullivers-router run \
@@ -46,101 +95,40 @@ uv run gullivers-router run \
   --router-weights artifacts/training/router.npz
 ```
 
-For local routing diagnostics without model completions:
-
-```sh
-uv run gullivers-router run \
-  --input examples/tasks.json \
-  --output artifacts/routes.json \
-  --router-weights artifacts/training/router.npz \
-  --classify-only
-```
-
-To let borderline local routes verify the local answer before accepting it:
-
-```sh
-uv run gullivers-router run \
-  --input examples/practice_tasks.json \
-  --output outputs/results.json \
-  --router-weights artifacts/training/router.npz \
-  --local-cascade
-```
-
-## Docker submission smoke test
-
-The Dockerfile builds a CPU-only `linux/amd64` image and includes the local Gemma E2B text
-GGUF, the Qwen3 0.6B summarisation GGUF, the Minibase NER-Standard GGUF, the Qwen3 embedding GGUF used by the router, and
-`artifacts/training/router.npz`.
-
-```sh
-docker buildx build --platform linux/amd64 --load -t gullivers-router:local .
-mkdir -p outputs
-uv run python -c "import numpy as np; np.savez('outputs/router-all-local.npz', weights=np.zeros(1024, dtype=np.float64), bias=np.float64(0), alpha=np.float64(2), normalize=True)"
-docker run --rm --memory=4g --cpus=2 \
-  -e CLOUD_PROVIDER=llama \
-  -e CLOUD_REPO_ID=google/gemma-4-E2B-it-qat-q4_0-gguf \
-  -e CLOUD_FILENAME=gemma-4-E2B_q4_0-it.gguf \
-  -e CLOUD_N_CTX=2048 \
-  -e CLOUD_N_GPU_LAYERS=0 \
-  -e CLOUD_N_THREADS=2 \
-  -e CLOUD_MODEL_ROOT=/app/models \
-  -v "$PWD/examples/practice_tasks.json:/input/tasks.json:ro" \
-  -v "$PWD/outputs:/output" \
-  --entrypoint gullivers-router \
-  gullivers-router:local run \
-  --input /input/tasks.json \
-  --output /output/results.json \
-  --router-weights /output/router-all-local.npz
-```
-
-This all-local smoke test writes `outputs/results.json` without requiring Fireworks credentials.
-
-## Local practice scoring
-
-Use the included practice pack to score routing changes before submitting:
+Run and judge the included practice set with:
 
 ```sh
 make practice
 ```
 
-This generates answers with the router, then grades them with the configured `judge` role.
+Useful commands:
 
-The report includes per-task LLM grades and a percentage score. Missing answers are counted as
-incorrect without calling the judge.
+| Command | Purpose |
+| --- | --- |
+| `uv run gullivers-router run` | Route a batch and generate answers. |
+| `uv run gullivers-router run --classify-only` | Inspect routes without generating answers. |
+| `uv run gullivers-router score-practice` | Grade practice answers as pass or fail. |
+| `uv run gullivers-router train` | Build the resumable training dataset. |
+| `uv run gullivers-router train-router` | Fit, calibrate and export the router. |
 
-## Publishing to GHCR
+## Docker
 
-`.github/workflows/publish-image.yml` builds the CPU image and pushes it to
-`ghcr.io/<owner>/gullivers-router`. It downloads the required GGUFs from HuggingFace (cached
-between runs), so the runner does not need them committed.
-
-Cut a release by pushing a tag:
+The Dockerfile builds a self-contained CPU-only `linux/amd64` image with all four quantised
+GGUF models and the calibrated router bundle.
 
 ```sh
-git tag v1.0
-git push origin v1.0
+docker buildx build --platform linux/amd64 --load -t gullivers-router:local .
+docker run --rm --memory=4g --cpus=2 \
+  -e FIREWORKS_API_KEY \
+  -v "$PWD/examples/practice_tasks.json:/input/tasks.json:ro" \
+  -v "$PWD/outputs:/output" \
+  gullivers-router:local
 ```
-
-Each run publishes immutable `:v1.0` and `:sha-<commit>` tags plus a moving `:latest`. Pin the
-evaluation program to an immutable tag so a redeploy never serves stale bytes. To force a clean
-rebuild (ignoring the Docker layer cache), run the workflow manually from the Actions tab with
-`no_cache` enabled.
-
-One-time setup:
-
-- Add an `HF_TOKEN` repository secret whose HuggingFace account has accepted the gated Gemma
-  license; otherwise the model download returns 403.
-- After the first publish, make the package public: repo → Packages → `gullivers-router` →
-  Package settings → Change visibility → Public. It stays public for later pushes and lets the
-  evaluation program pull anonymously even while the repo is private.
 
 ## Development
 
-| Command       | Description                                      |
-| ------------- | ------------------------------------------------ |
-| `make setup`  | Install dependencies (`uv sync`).                |
-| `make test`   | Run the test suite (`pytest`).                   |
-| `make lint`   | Lint (`ruff check`) and type-check (`ty check`). |
-| `make format` | Auto-fix and format with `ruff`.                 |
-
-Run the CLI with `uv run gullivers-router` or `uv run python -m gullivers_router`.
+```sh
+make test
+make lint
+make format
+```
