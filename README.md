@@ -64,11 +64,11 @@ threshold. Long prompts with plenty of threshold headroom run first because they
 cloud-token savings. Borderline prompts stay near the back of the queue, where they are cheaper
 to hand off if local inference is slower than expected.
 
-The batch has a nine-minute local deadline, measured from startup. Gemma generation stops at
-the deadline and the current task, together with any queued local work, moves to the concurrent
-cloud pool. Completed local and NER answers are retained, and results are still written in the
-original input order. The deadline can be changed with `--local-deadline-seconds` or disabled
-with a value of `0`.
+The batch has an eight-and-a-half-minute local deadline, measured from startup. Gemma
+generation stops at the deadline and the current task, together with any queued local work,
+moves to the concurrent cloud pool. Completed local and NER answers are retained, and results
+are still written in the original input order. The deadline can be changed with
+`--local-deadline-seconds` or disabled with a value of `0`.
 
 ## Training the router
 
